@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="86dp">
+
+        <ImageView
+            android:id="@+id/videoThumb"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/bg_thumb"
+            android:contentDescription="@null"
+            android:scaleType="centerCrop" />
+
+        <!-- play chip: the launcher icon's gradient badge, scaled down -->
+        <TextView
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:layout_gravity="bottom|start"
+            android:layout_margin="6dp"
+            android:background="@drawable/bg_play"
+            android:gravity="center"
+            android:paddingStart="1dp"
+            android:text="▶"
+            android:textColor="#FFFFFF"
+            android:textSize="8sp" />
+
+        <TextView
+            android:id="@+id/videoDuration"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|end"
+            android:layout_margin="6dp"
+            android:background="@drawable/bg_badge"
+            android:fontFamily="monospace"
+            android:paddingStart="5dp"
+            android:paddingTop="1dp"
+            android:paddingEnd="5dp"
+            android:paddingBottom="1dp"
+            android:textColor="#FFFFFF"
+            android:textSize="8sp" />
+    </FrameLayout>
+
+    <TextView
+        android:id="@+id/videoTitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:ellipsize="end"
+        android:lineSpacingExtra="1dp"
+        android:maxLines="2"
+        android:textColor="@color/on_surface"
+        android:textSize="9sp" />
+</LinearLayout>

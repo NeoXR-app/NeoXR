@@ -1,0 +1,179 @@
+<?xml version="1.0" encoding="utf-8"?>
+<merge xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- two containers: landscape keeps everything in rowMain (single storey, the
+         SBS overlay depends on that bar depth); portrait remote moves play/3D/
+         quality into rowTop programmatically (applyRemoteDims) so the seek bar
+         gets the full width below -->
+    <LinearLayout
+        android:id="@+id/controlsBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="8dp"
+        android:background="@drawable/bg_input"
+        android:orientation="vertical"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:paddingTop="4dp"
+        android:paddingBottom="4dp"
+        android:visibility="gone">
+
+    <FrameLayout
+        android:id="@+id/rowTop"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingBottom="2dp"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:id="@+id/rowMain"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <!-- U+25BA/U+2759: glyphs with no emoji variant — U+25B6/U+23F8 render as
+             colored emoji on some vendor fonts and ignore textColor -->
+        <TextView
+            android:id="@+id/btnPlay"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:padding="10dp"
+            android:text="►"
+            android:textColor="@color/on_surface"
+            android:textSize="18sp" />
+
+        <!-- monospace + fixed min width: proportional digits shift the buttons
+             sideways on every tick, and they are already half-size in SBS copies -->
+        <TextView
+            android:id="@+id/timePos"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:gravity="center"
+            android:minWidth="56dp"
+            android:text="0:00"
+            android:textColor="@color/on_surface_variant"
+            android:textSize="12sp" />
+
+        <SeekBar
+            android:id="@+id/seek"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:maxHeight="4dp"
+            android:minHeight="4dp"
+            android:progressDrawable="@drawable/seekbar_track"
+            android:splitTrack="false"
+            android:thumb="@drawable/seekbar_thumb" />
+
+        <TextView
+            android:id="@+id/timeDur"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:gravity="center"
+            android:minWidth="56dp"
+            android:text="0:00"
+            android:textColor="@color/on_surface_variant"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/btn3d"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:padding="10dp"
+            android:text="3D"
+            android:textColor="@color/primary"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/btnQuality"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:fontFamily="monospace"
+            android:padding="10dp"
+            android:text="…"
+            android:textColor="@color/primary"
+            android:textSize="13sp" />
+    </LinearLayout>
+    </LinearLayout>
+
+    <!-- stereo tuning: opened by the 3D button; buttons are huge on purpose — the
+         whole overlay is drawn 2x squeezed for the glasses, small targets are unhittable -->
+    <LinearLayout
+        android:id="@+id/eyePanel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:layout_marginStart="112dp"
+        android:layout_marginEnd="112dp"
+        android:layout_marginBottom="76dp"
+        android:background="@drawable/bg_input"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/btnEyeMinus"
+            android:layout_width="0dp"
+            android:layout_height="60dp"
+            android:layout_weight="1"
+            android:background="?android:attr/selectableItemBackground"
+            android:gravity="center"
+            android:text="−"
+            android:textColor="@color/on_surface"
+            android:textSize="24sp" />
+
+        <TextView
+            android:id="@+id/txtEye"
+            android:layout_width="wrap_content"
+            android:layout_height="60dp"
+            android:gravity="center"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
+            android:text="3D"
+            android:textColor="@color/on_surface_variant"
+            android:textSize="16sp" />
+
+        <TextView
+            android:id="@+id/btnEyePlus"
+            android:layout_width="0dp"
+            android:layout_height="60dp"
+            android:layout_weight="1"
+            android:background="?android:attr/selectableItemBackground"
+            android:gravity="center"
+            android:text="+"
+            android:textColor="@color/on_surface"
+            android:textSize="24sp" />
+
+        <TextView
+            android:id="@+id/btnEyeSwap"
+            android:layout_width="0dp"
+            android:layout_height="60dp"
+            android:layout_weight="1"
+            android:background="?android:attr/selectableItemBackground"
+            android:gravity="center"
+            android:text="⇄"
+            android:textColor="@color/on_surface"
+            android:textSize="21sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/qualityList"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="112dp"
+        android:layout_marginBottom="76dp"
+        android:background="@drawable/bg_input"
+        android:orientation="vertical"
+        android:paddingTop="4dp"
+        android:paddingBottom="4dp"
+        android:visibility="gone" />
+</merge>

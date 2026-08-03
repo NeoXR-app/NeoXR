@@ -1,0 +1,73 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+// Release signing: keystore.properties is git-ignored and points at a keystore
+// kept outside the repo. Without it, release builds fall back to the debug key
+// (so a fresh clone still builds).
+def keystorePropsFile = rootProject.file('keystore.properties')
+def keystoreProps = new Properties()
+if (keystorePropsFile.exists()) {
+    keystoreProps.load(new FileInputStream(keystorePropsFile))
+}
+
+android {
+    namespace 'com.neoxr.player'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.neoxr.player"
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    signingConfigs {
+        release {
+            if (keystoreProps.containsKey('storeFile')) {
+                storeFile file(keystoreProps['storeFile'])
+                storePassword keystoreProps['storePassword']
+                keyAlias keystoreProps['keyAlias']
+                keyPassword keystoreProps['keyPassword']
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig keystoreProps.containsKey('storeFile')
+                    ? signingConfigs.release
+                    : signingConfigs.debug
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    // sideloaded by hand — a recognizable file name beats "app-debug.apk"
+    applicationVariants.all { variant ->
+        variant.outputs.all {
+            outputFileName = "NeoXR.apk"
+        }
+    }
+}
+
+dependencies {
+    implementation 'com.google.android.material:material:1.12.0'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'androidx.media3:media3-exoplayer:1.4.1'
+    implementation 'androidx.media3:media3-exoplayer-hls:1.4.1'
+    implementation 'androidx.media3:media3-ui:1.4.1'
+    implementation 'com.github.bumptech.glide:glide:4.16.0'
+
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20240303'
+}

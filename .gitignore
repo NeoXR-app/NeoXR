@@ -1,0 +1,19 @@
+.gradle/
+build/
+app/build/
+local.properties
+.DS_Store
+*.iml
+.idea/
+.kotlin/
+
+# signing — never commit
+keystore.properties
+*.jks
+*.keystore
+
+# local working notes, not part of the project
+CLAUDE.md
+next_steps.md
+.claude/
+.remember/

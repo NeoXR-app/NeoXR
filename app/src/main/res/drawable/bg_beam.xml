@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- the brand beam: the icon's violet-to-azure gradient, used as an active marker -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <gradient
+        android:angle="0"
+        android:endColor="@color/beam_end"
+        android:startColor="@color/beam_start" />
+    <corners android:radius="2dp" />
+</shape>

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Palette sampled from the app icon: a violet-to-azure mark on a blue-black
+         tile. Deep cool blacks keep glare down in the glasses; the only light in the
+         chrome comes from the content thumbnails and the single brand beam. -->
+    <!-- "void" would be a reserved Java keyword — hence backdrop -->
+    <color name="backdrop">#06060D</color>
+    <color name="surface">#101021</color>
+    <color name="surface_container">#14142A</color>
+    <color name="surface_high">#1C1C3A</color>
+    <color name="surface_stroke">#282850</color>
+    <color name="on_surface">#ECECFA</color>
+    <color name="surface_variant">#2A2A4E</color>
+    <color name="on_surface_variant">#9292B8</color>
+    <color name="outline">#4A4A78</color>
+
+    <!-- the beam: the icon's gradient, the one accent this UI spends boldness on -->
+    <color name="beam_start">#A855F7</color>
+    <color name="beam_end">#2E9BFF</color>
+
+    <color name="primary">#3B9EFF</color>
+    <color name="on_primary">#00122B</color>
+    <color name="primary_container">#1B3A66</color>
+    <color name="on_primary_container">#CFE4FF</color>
+    <color name="secondary_container">#2A2350</color>
+    <color name="on_secondary_container">#E0D8FF</color>
+
+    <!-- matches the dark tile of the app icon art,
+         fills behind the launcher mask so the full-bleed foreground never seams -->
+    <color name="ic_launcher_bg">#01010B</color>
+</resources>

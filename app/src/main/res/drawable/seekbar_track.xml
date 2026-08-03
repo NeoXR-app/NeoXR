@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- seek track: quiet groove, the played part carries the brand beam — one of the
+     few sanctioned gradient spots (active row edges and the play badge are the others) -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@android:id/background">
+        <shape>
+            <size android:height="4dp" />
+            <corners android:radius="2dp" />
+            <solid android:color="@color/surface_stroke" />
+        </shape>
+    </item>
+    <item android:id="@android:id/progress">
+        <clip>
+            <shape>
+                <size android:height="4dp" />
+                <corners android:radius="2dp" />
+                <gradient
+                    android:angle="0"
+                    android:startColor="@color/beam_start"
+                    android:endColor="@color/beam_end" />
+            </shape>
+        </clip>
+    </item>
+</layer-list>

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- header hairline: saturated under the mark, fading out across the screen -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <gradient
+        android:angle="0"
+        android:centerColor="@color/beam_end"
+        android:endColor="#0000000E"
+        android:startColor="@color/beam_start" />
+</shape>
