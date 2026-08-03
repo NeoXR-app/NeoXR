@@ -154,3 +154,9 @@ works. Please use the
 
 [GPL-3.0](LICENSE). This is free software: you may use, study, share and modify it,
 and any distributed derivative must stay under the same license.
+
+NeoXR is an independent project. It is not affiliated with, endorsed by or sponsored
+by XREAL or any other hardware maker. Product names are used only to describe
+compatibility and belong to their respective owners. Head tracking builds on the
+community's reverse engineering of the glasses' own network interface, done for
+interoperability; NeoXR contains no vendor firmware or vendor code.
