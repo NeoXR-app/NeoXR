@@ -17,3 +17,6 @@ CLAUDE.md
 next_steps.md
 .claude/
 .remember/
+
+# demo master (kept locally, only the compressed demo.mp4 is committed)
+docs/video/NeoXR-demo-video.mp4

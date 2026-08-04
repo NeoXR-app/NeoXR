@@ -7,13 +7,28 @@ resolution, and the phone becomes a remote control with a touchpad. NeoXR plays
 180° and 360° video, side-by-side and over-under 3D, local files, and video from
 sites that serve a [DeoVR JSON API](https://deovr.com/app/doc) feed.
 
+## Demo
+
+Left: what you see in the glasses. Right: the phone acting as the remote.
+
 <p align="center">
-  <img src="docs/screenshots/05-sbs-on-phone.jpg" width="640" alt="Player in 3D SBS mode">
+  <a href="docs/video/demo.mp4">
+    <img src="docs/video/demo-preview.gif" width="720" alt="NeoXR demo: video on the glasses, phone as the remote">
+  </a>
+  <br>
+  <a href="docs/video/demo.mp4"><b>▶ Watch the full demo (1:44)</b></a>
 </p>
 
 | Main menu | Video list | Player remote |
 |---|---|---|
 | <img src="docs/screenshots/01-main-menu.jpg" width="220"> | <img src="docs/screenshots/02-video-list.jpg" width="220"> | <img src="docs/screenshots/04-player-remote.jpg" width="220"> |
+
+Without glasses the video stays on the phone as a split SBS pair, for the glasses'
+mirroring mode:
+
+<p align="center">
+  <img src="docs/screenshots/05-sbs-on-phone.jpg" width="640" alt="Split SBS view on the phone">
+</p>
 
 ## What it does
 
@@ -154,9 +169,3 @@ works. Please use the
 
 [GPL-3.0](LICENSE). This is free software: you may use, study, share and modify it,
 and any distributed derivative must stay under the same license.
-
-NeoXR is an independent project. It is not affiliated with, endorsed by or sponsored
-by XREAL or any other hardware maker. Product names are used only to describe
-compatibility and belong to their respective owners. Head tracking builds on the
-community's reverse engineering of the glasses' own network interface, done for
-interoperability; NeoXR contains no vendor firmware or vendor code.
