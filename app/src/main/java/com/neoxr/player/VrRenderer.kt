@@ -34,6 +34,14 @@ class VrRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) :
     @Volatile var widthScale = 1f
 
     /**
+     * Manual vertical squeeze (1 = full height), the counterpart of [widthScale].
+     * Some material is encoded with the wrong vertical scale and looks squashed or
+     * stretched; shrinking the viewport around the half's center corrects it without
+     * touching the projection.
+     */
+    @Volatile var heightScale = 1f
+
+    /**
      * Vertical FOV of the virtual camera, degrees — set via PlayerActivity.applyFov.
      * Projection stays rectilinear: it is the only mapping that keeps straight lines
      * straight, which matters on room-scale VR content (walls, furniture). A
@@ -146,6 +154,7 @@ class VrRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) :
         // black side bands, no geometric warping.
         val eyeW = width / 2
         val vw = (eyeW * widthScale).toInt().coerceAtLeast(1)
+        val vh = (height * heightScale).toInt().coerceAtLeast(1)
         GLES20.glEnable(GLES20.GL_SCISSOR_TEST)
         for (eye in 0..1) {
             val x0 = eye * eyeW
@@ -154,7 +163,7 @@ class VrRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) :
             GLES20.glScissor(x0, 0, eyeW, height)
             GLES20.glViewport(
                 x0 + (eyeW - vw) / 2 + if (eye == 0) eyeShiftPx else -eyeShiftPx,
-                0, vw, height
+                (height - vh) / 2, vw, vh
             )
             if (screenAngle == 0) {
                 Matrix.setIdentityM(mvp, 0) // flat: screen-locked, no look-around

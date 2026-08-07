@@ -43,8 +43,10 @@ mirroring mode:
 - **Any format, detected automatically.** Screen shape (flat, wide, 180°, 360°) and
   3D layout (2D, side-by-side, over-under) come from the video metadata, the file
   name, or the frame shape — and you can always set them by hand.
-- **Three ways to get video:** a site feed, the built-in browser, or a local file.
-- **Picture controls:** zoom, width, stereo depth and eye swap, per video.
+- **Three ways to get video:** a site feed, the built-in browser, or a local file
+  (local videos are grouped by folder).
+- **Picture controls:** zoom, width, height, stereo depth and eye swap, per video.
+- **Audio tracks and subtitles** for files that carry more than one.
 - **No account, no ads, no tracking.** The app has no analytics and makes no network
   requests beyond the sites you open yourself.
 
@@ -104,9 +106,18 @@ In the player:
 
 The player has two button columns. **Screen** sets the shape: Flat, Wide, 180°,
 360°. **Layout** sets the 3D format: 2D, SBS (side-by-side), OU (over-under).
-`W` changes the picture width and `Z` the zoom. The `3D` button opens depth
-adjustment and an eye-swap switch, which helps when left and right images are
-reversed.
+`Z` sets the zoom, `W` and `H` squeeze the picture horizontally and vertically —
+useful when a video is encoded with the wrong scale. `◄◄` and `►►` skip 10 seconds
+back and 15 forward; hold them for one minute back and five forward. The `3D` button
+opens depth adjustment and an eye-swap switch (for sources with the halves
+reversed), and in landscape it also holds `W` and `H`. `CC` appears when a video
+carries several audio tracks or subtitles; unsupported tracks are marked, and a
+track the device cannot decode no longer stops playback — the video keeps running
+without sound.
+
+On a device with more than one display — a foldable, or a dual-screen handheld — a
+**Screen** button appears and moves the video to the next display, in case the app
+guessed wrong about which one is the glasses.
 
 ## Head tracking
 

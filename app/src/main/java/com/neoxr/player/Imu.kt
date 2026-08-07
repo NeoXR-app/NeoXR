@@ -150,6 +150,12 @@ class HeadTracker(private val context: Context, private val onStatus: (String) -
         // why pitch is taken from rollDeg.
         private const val YAW_SIGN = 1f
         private const val PITCH_SIGN = -1f
+
+        // The glasses accept a single connection on the IMU port, so only one
+        // tracker may be live per process. An activity left in the back stack used
+        // to keep the socket open, which made head tracking unavailable in every
+        // player opened afterwards — starting a tracker now retires the previous one.
+        @Volatile private var active: HeadTracker? = null
     }
 
     var onOrientation: ((yawDeg: Float, pitchDeg: Float) -> Unit)? = null
@@ -179,6 +185,8 @@ class HeadTracker(private val context: Context, private val onStatus: (String) -
 
     fun start() {
         if (running) return
+        active?.takeIf { it !== this }?.stop()
+        active = this
         running = true
         status("Head: connecting to glasses…")
 
@@ -329,6 +337,7 @@ class HeadTracker(private val context: Context, private val onStatus: (String) -
 
     fun stop() {
         running = false
+        if (active === this) active = null
         try { socket?.close() } catch (_: Exception) {}
         socket = null
         stopNet()

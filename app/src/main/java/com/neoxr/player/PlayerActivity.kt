@@ -66,10 +66,24 @@ class PlayerActivity : Activity(), SensorEventListener {
     private lateinit var timeDur: TextView
     private lateinit var seek: SeekBar
     private lateinit var qualityList: LinearLayout
+    private lateinit var trackList: LinearLayout
+    private lateinit var trackScroll: View
     // side columns with the format buttons (inside the SBS overlay, see buildSidePanels)
     private lateinit var leftPanel: LinearLayout
     private lateinit var rightPanel: LinearLayout
     private lateinit var btnClose: TextView
+    private var btnScreen: TextView? = null // display switcher (multi-display devices)
+    private var subtitleView: TextView? = null // phone-side subtitles (no glasses)
+    private var glassesSubs: TextView? = null  // subtitles shown on the glasses
+    private var btnTracks: TextView? = null
+    private var audioDisabled = false // set after an undecodable audio track
+    // Subtitle size in sp. The glasses squeeze each half horizontally, so text that
+    // looks fine on a phone reads tiny there — hence a large default and a control.
+    private var subSizeSp = 26
+    private lateinit var btnRw: TextView
+    private lateinit var btnFf: TextView
+    private var playGroup: LinearLayout? = null // RW/play/FF, regrouped in portrait
+    private var sideGroup: LinearLayout? = null // CC + quality, regrouped in portrait
     private val screenBtns = HashMap<Int, TextView>()
     private val layoutBtns = HashMap<String, TextView>()
     private var sources: List<Pair<Int, String>> = emptyList()
@@ -83,15 +97,18 @@ class PlayerActivity : Activity(), SensorEventListener {
     private var formatAuto = true // no manual override yet — may refine on first frame size
     private var eyeShiftDp = 0
     private var widthPct = 100
+    private var heightPct = 100
     private var zoomPct = 100 // camera magnification, in tan space
     private var seekDragging = false
     private val handler = Handler(Looper.getMainLooper())
     private val hideControls = Runnable {
         controlsBar.visibility = View.GONE
         qualityList.visibility = View.GONE
+        trackScroll.visibility = View.GONE
         leftPanel.visibility = View.GONE
         rightPanel.visibility = View.GONE
         btnClose.visibility = View.GONE
+        btnScreen?.visibility = View.GONE
         findViewById<View>(R.id.eyePanel)?.visibility = View.GONE
     }
     private val progressTick = object : Runnable {
@@ -118,6 +135,9 @@ class PlayerActivity : Activity(), SensorEventListener {
     // live value readouts inside the remote steppers ([−  W 100  +] rows)
     private var wValue: TextView? = null
     private var zValue: TextView? = null
+    private var hValue: TextView? = null
+    private var wRow: LinearLayout? = null // W stepper row (portrait only)
+    private var hRow: LinearLayout? = null // H stepper row (portrait only)
     private val stepperRows = mutableListOf<LinearLayout>() // resized on rotation
     // No full auto-centering on the first sensor sample: recenter() also zeroes PITCH,
     // which would capture whatever pose the phone happens to be in at launch. Laying
@@ -130,6 +150,7 @@ class PlayerActivity : Activity(), SensorEventListener {
         super.onCreate(savedInstanceState)
         fullscreenOverCutout()
         resumePos = savedInstanceState?.getLong("pos") ?: 0L
+        subSizeSp = getSharedPreferences("neoxr", MODE_PRIVATE).getInt("subSize", 26)
         // diagnostic pass: dump every display the system exposes
         for (d in (getSystemService(DISPLAY_SERVICE) as DisplayManager).displays) {
             android.util.Log.i(
@@ -206,7 +227,35 @@ class PlayerActivity : Activity(), SensorEventListener {
         setContentView(root)
         presentation?.let {
             try {
-                it.setContentView(glView)
+                // subtitles have to live on the GLASSES, next to the video — the
+                // phone side is the remote and nobody is looking at it. Drawn by us
+                // in an overlay above the GL view, doubled per eye by the wrapper.
+                val glassesRoot = FrameLayout(it.context)
+                glassesRoot.addView(glView, FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
+                ))
+                val subs = SbsFrameLayout(it.context).apply { sbs = true }
+                subs.addView(TextView(it.context).apply {
+                    glassesSubs = this
+                    textSize = subSizeSp.toFloat()
+                    gravity = Gravity.CENTER
+                    setTextColor(0xFFFFFFFF.toInt())
+                    setShadowLayer(6f, 0f, 0f, 0xFF000000.toInt())
+                    visibility = View.GONE
+                    layoutParams = FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.WRAP_CONTENT,
+                        Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                    ).apply {
+                        val dp = resources.displayMetrics.density
+                        marginStart = (40 * dp).toInt(); marginEnd = (40 * dp).toInt()
+                        bottomMargin = (40 * dp).toInt()
+                    }
+                })
+                glassesRoot.addView(subs, FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
+                ))
+                it.setContentView(glassesRoot)
                 it.show()
                 android.util.Log.i("NeoXR", "presentation shown on display ${ext?.displayId}")
             } catch (e: Exception) {
@@ -221,20 +270,55 @@ class PlayerActivity : Activity(), SensorEventListener {
         timeDur = sbsOverlay.findViewById(R.id.timeDur)
         seek = sbsOverlay.findViewById(R.id.seek)
         qualityList = sbsOverlay.findViewById(R.id.qualityList)
+        trackList = sbsOverlay.findViewById(R.id.trackList)
+        trackScroll = sbsOverlay.findViewById(R.id.trackScroll)
 
         btnPlay.setOnClickListener {
             player?.let { if (it.isPlaying) it.pause() else it.play() }
             showControls()
         }
+        // relative seek: fine for both local files and streams (CLOSEST_SYNC keeps
+        // local seeks instant), and the most-requested missing control
+        fun seekBy(deltaMs: Long) {
+            player?.let {
+                if (!it.isCurrentMediaItemSeekable) {
+                    sbsOverlay.flash("This video does not support seeking")
+                    return@let
+                }
+                val dur = it.duration.coerceAtLeast(0)
+                var to = it.currentPosition + deltaMs
+                if (dur > 0) to = to.coerceAtMost(dur - 1000)
+                it.seekTo(to.coerceAtLeast(0))
+            }
+            showControls()
+        }
+        btnRw = sbsOverlay.findViewById(R.id.btnRw)
+        btnFf = sbsOverlay.findViewById(R.id.btnFf)
+        btnRw.setOnClickListener { seekBy(-10_000) }
+        btnFf.setOnClickListener { seekBy(+15_000) }
+        btnRw.setOnLongClickListener { seekBy(-60_000); true }
+        btnFf.setOnLongClickListener { seekBy(+300_000); true }
+
+        subtitleView = sbsOverlay.findViewById<TextView>(R.id.subtitleText)
+            .apply { textSize = subSizeSp.toFloat() }
+        btnTracks = sbsOverlay.findViewById<TextView>(R.id.btnTracks).apply {
+            setOnClickListener {
+                if (trackScroll.visibility == View.VISIBLE) trackScroll.visibility = View.GONE
+                else { qualityList.visibility = View.GONE; buildTrackMenu() }
+                showControls()
+            }
+        }
         btnQuality.setOnClickListener {
-            qualityList.visibility =
-                if (qualityList.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+            trackScroll.visibility = View.GONE
+            if (qualityList.visibility == View.VISIBLE) qualityList.visibility = View.GONE
+            else showPopup(qualityList)
             showControls()
         }
         // zoom/width/convergence are deliberately NOT persisted: they are per-content
         // corrections, so every video starts from the defaults
         applyEyeShift()
         applyFov()
+        renderer.heightScale = 1f
         val eyePanel = sbsOverlay.findViewById<View>(R.id.eyePanel)
         btn3d = sbsOverlay.findViewById(R.id.btn3d)
         applyRemoteDims()
@@ -245,6 +329,10 @@ class PlayerActivity : Activity(), SensorEventListener {
         }
         sbsOverlay.findViewById<TextView>(R.id.btnEyeMinus).setOnClickListener { adjustEyeShift(-2) }
         sbsOverlay.findViewById<TextView>(R.id.btnEyePlus).setOnClickListener { adjustEyeShift(2) }
+        sbsOverlay.findViewById<TextView>(R.id.btnHMinus).setOnClickListener { adjustHeight(-5) }
+        sbsOverlay.findViewById<TextView>(R.id.btnHPlus).setOnClickListener { adjustHeight(+5) }
+        sbsOverlay.findViewById<TextView>(R.id.btnWMinus).setOnClickListener { adjustWidth(-5) }
+        sbsOverlay.findViewById<TextView>(R.id.btnWPlus).setOnClickListener { adjustWidth(+5) }
         sbsOverlay.findViewById<TextView>(R.id.btnEyeSwap).setOnClickListener { btn ->
             // per-video toggle, deliberately not persisted: only some sources ship R|L
             renderer.swapEyes = !renderer.swapEyes
@@ -459,10 +547,46 @@ class PlayerActivity : Activity(), SensorEventListener {
             addListener(object : Player.Listener {
                 override fun onPlayerError(error: PlaybackException) {
                     android.util.Log.e("NeoXR", "player error: $error", error)
+                    // A codec the device cannot decode kills the whole playback,
+                    // even when only the audio track is at fault (AC-3 and DTS are
+                    // the usual ones). Drop audio, keep the video running, and say so.
+                    val audioCodec = error.errorCode ==
+                            PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED ||
+                            error.message?.contains("AudioRenderer", true) == true
+                    if (audioCodec && !audioDisabled) {
+                        audioDisabled = true
+                        player?.let { p ->
+                            p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+                                .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
+                                .build()
+                            p.prepare()
+                            p.play()
+                        }
+                        sbsOverlay.flash("This audio track is not supported — playing without sound")
+                        return
+                    }
                     sbsOverlay.flash("Player error: ${error.message}")
                 }
 
+                // subtitles come as cues because the video itself lives in a GL
+                // texture — ExoPlayer's own subtitle view has nothing to draw on
+                override fun onCues(cues: androidx.media3.common.text.CueGroup) {
+                    val text = cues.cues.mapNotNull { it.text }.joinToString("\n")
+                    // whichever surface currently shows the video gets the subtitles
+                    val target = glassesSubs ?: subtitleView
+                    target?.let {
+                        it.text = text
+                        it.visibility = if (text.isBlank()) View.GONE else View.VISIBLE
+                    }
+                }
+
                 override fun onTracksChanged(tracks: Tracks) {
+                    // the CC button only earns its place when there is a choice:
+                    // more than one audio track, or any subtitles at all
+                    val audio = tracks.groups.count { it.type == C.TRACK_TYPE_AUDIO }
+                    val text = tracks.groups.count { it.type == C.TRACK_TYPE_TEXT }
+                    btnTracks?.visibility =
+                        if (audio > 1 || text > 0) View.VISIBLE else View.GONE
                     // feed sources win: they are separate URLs, not manifest variants
                     if (sources.isNotEmpty()) return
                     trackHeights = tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
@@ -570,9 +694,23 @@ class PlayerActivity : Activity(), SensorEventListener {
                 showControls()
             }
         }
-        // head tracking needs the glasses anyway, so the 5th row only exists in
-        // remote mode — the phone-SBS overlay keeps its 4-row budget
+        // Head tracking needs the glasses anyway, so this row only exists in remote
+        // mode — the phone-SBS overlay keeps its 4-row budget. It sits under its own
+        // caption: testers kept reading it as a fifth projection mode and never
+        // found the feature.
         if (glassesDisplay != null) {
+            // compact caption: the landscape column budget is tight (5 rows must
+            // clear the bar on a ~353dp screen), so this adds ~15dp, not ~26dp
+            leftPanel.addView(TextView(this).apply {
+                text = "LOOK"
+                textSize = 8f
+                typeface = android.graphics.Typeface.MONOSPACE
+                letterSpacing = 0.22f
+                setGravity(Gravity.CENTER)
+                setTextColor(getColor(R.color.on_surface_variant))
+            }, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = (5 * d).toInt() })
             btnHead = button(leftPanel, "Head") { toggleHead() }
         }
         rightPanel = column(Gravity.END, "LAYOUT")
@@ -623,7 +761,10 @@ class PlayerActivity : Activity(), SensorEventListener {
             }
             rightPanel.gravity = Gravity.CENTER_HORIZONTAL
             wValue = stepper("W") { adjustWidth(it * 5) }
+            hValue = stepper("H") { adjustHeight(it * 5) }
             zValue = stepper("Z") { adjustZoom(it * 10) }
+            wRow = stepperRows[stepperRows.size - 3]
+            hRow = stepperRows[stepperRows.size - 2]
         } else {
             button(rightPanel, "W−") { adjustWidth(-5) }
             button(rightPanel, "W+") { adjustWidth(+5) }
@@ -645,6 +786,25 @@ class PlayerActivity : Activity(), SensorEventListener {
             visibility = View.GONE
             setOnClickListener { finish() }
             sbsOverlay.addView(this)
+        }
+
+        // "Screen" switches which display the video renders on — the auto-pick can
+        // land on a second built-in panel on dual-screen devices. Only shown when
+        // there is somewhere else to go.
+        if (glassesDisplay != null && Glasses.candidates(this).size > 1) {
+            btnScreen = TextView(this).apply {
+                text = "Screen"
+                textSize = 12f
+                gravity = Gravity.CENTER
+                setTextColor(getColor(R.color.on_surface_variant))
+                setBackgroundResource(R.drawable.bg_input)
+                layoutParams = FrameLayout.LayoutParams(
+                    (72 * d).toInt(), (36 * d).toInt(), Gravity.TOP or Gravity.START
+                ).apply { topMargin = (8 * d).toInt(); marginStart = (12 * d).toInt() }
+                visibility = View.GONE
+                setOnClickListener { Glasses.cycle(this@PlayerActivity)?.let { recreate() } }
+                sbsOverlay.addView(this)
+            }
         }
     }
 
@@ -680,22 +840,40 @@ class PlayerActivity : Activity(), SensorEventListener {
         fun frameLp(gravity: Int) = FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, gravity
         )
+        fun rowLp() = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        )
         if (portrait && btnPlay.parent === rowMain) {
-            rowMain.removeView(btnPlay)
-            rowMain.removeView(btn3d)
-            rowMain.removeView(btnQuality)
+            listOf(btnRw, btnPlay, btnFf, btn3d, btnQuality).forEach { rowMain.removeView(it) }
+            btnTracks?.let { rowMain.removeView(it) }
+            val play = playGroup ?: LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                playGroup = this
+            }
+            val side = sideGroup ?: LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                sideGroup = this
+            }
+            play.removeAllViews(); side.removeAllViews()
+            listOf(btnRw, btnPlay, btnFf).forEach { play.addView(it, rowLp()) }
+            btnTracks?.let { side.addView(it, rowLp()) }
+            side.addView(btnQuality, rowLp())
+            rowTop.removeAllViews()
             rowTop.addView(btn3d, frameLp(Gravity.START or Gravity.CENTER_VERTICAL))
-            rowTop.addView(btnPlay, frameLp(Gravity.CENTER))
-            rowTop.addView(btnQuality, frameLp(Gravity.END or Gravity.CENTER_VERTICAL))
+            rowTop.addView(play, frameLp(Gravity.CENTER))
+            rowTop.addView(side, frameLp(Gravity.END or Gravity.CENTER_VERTICAL))
             rowTop.visibility = View.VISIBLE
-        } else if (!portrait && btnPlay.parent === rowTop) {
+        } else if (!portrait && btnPlay.parent !== rowMain) {
+            playGroup?.removeAllViews(); sideGroup?.removeAllViews()
             rowTop.removeAllViews()
             rowTop.visibility = View.GONE
-            fun rowLp() = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-            rowMain.addView(btnPlay, 0, rowLp())
+            rowMain.addView(btnRw, 0, rowLp())
+            rowMain.addView(btnPlay, 1, rowLp())
+            rowMain.addView(btnFf, 2, rowLp())
             rowMain.addView(btn3d, rowLp())
+            btnTracks?.let { rowMain.addView(it, rowLp()) }
             rowMain.addView(btnQuality, rowLp())
         }
 
@@ -707,6 +885,15 @@ class PlayerActivity : Activity(), SensorEventListener {
             it.marginEnd = ((if (portrait) 12 else 0) * d).toInt()
         }
         btnClose.layoutParams = btnClose.layoutParams
+
+        // W and H live in the right column when there is height for them (portrait)
+        // and inside the 3D panel otherwise — the landscape column has no room left
+        wRow?.visibility = if (portrait) View.VISIBLE else View.GONE
+        hRow?.visibility = if (portrait) View.VISIBLE else View.GONE
+        sbsOverlay.findViewById<View>(R.id.panelWidthRow)?.visibility =
+            if (portrait) View.GONE else View.VISIBLE
+        sbsOverlay.findViewById<View>(R.id.panelHeightRow)?.visibility =
+            if (portrait) View.GONE else View.VISIBLE
 
         // the deeper portrait bar pushes the columns (and the panels above them) up
         val colBottom = if (portrait) 122 else 68
@@ -724,11 +911,25 @@ class PlayerActivity : Activity(), SensorEventListener {
             it.bottomMargin = ((if (portrait) colTop else 76) * d).toInt()
         }
         eyePanel.layoutParams = eyePanel.layoutParams
-        (qualityList.layoutParams as FrameLayout.LayoutParams).let {
-            it.marginEnd = ((if (portrait) 14 else 146) * d).toInt()
-            it.bottomMargin = ((if (portrait) colTop else 76) * d).toInt()
+    }
+
+    /**
+     * Shows a popup menu directly above the control bar and raises it above the side
+     * columns. Menus used to be placed with fixed margins per orientation, which put
+     * them under the buttons whenever the bar changed depth.
+     */
+    private fun showPopup(popup: View) {
+        val d = resources.displayMetrics.density
+        (popup.layoutParams as FrameLayout.LayoutParams).let {
+            it.gravity = Gravity.BOTTOM or Gravity.END
+            it.marginStart = (8 * d).toInt()
+            it.marginEnd = (8 * d).toInt()
+            it.bottomMargin = controlsBar.height + (14 * d).toInt()
         }
-        qualityList.layoutParams = qualityList.layoutParams
+        popup.layoutParams = popup.layoutParams
+        popup.visibility = View.VISIBLE
+        popup.bringToFront()
+        popup.parent?.requestLayout()
     }
 
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
@@ -759,11 +960,22 @@ class PlayerActivity : Activity(), SensorEventListener {
         showControls()
     }
 
+    /** Manual vertical squeeze — for material encoded with the wrong vertical scale. */
+    private fun adjustHeight(delta: Int) {
+        heightPct = (heightPct + delta).coerceIn(50, 120)
+        renderer.heightScale = heightPct / 100f
+        sbsOverlay.findViewById<TextView>(R.id.txtH)?.text = "H $heightPct"
+        hValue?.text = "H $heightPct"
+        showControls()
+    }
+
     /** Manual horizontal squeeze for content the glasses show too wide. */
     private fun adjustWidth(delta: Int) {
         widthPct = (widthPct + delta).coerceIn(50, 120)
         renderer.widthScale = widthPct / 100f
-        wValue?.also { it.text = "W $widthPct" } ?: sbsOverlay.flash("Width $widthPct%")
+        wValue?.text = "W $widthPct"
+        sbsOverlay.findViewById<TextView>(R.id.txtW)?.text = "W $widthPct"
+        if (wValue == null && glassesDisplay == null) sbsOverlay.flash("Width $widthPct%")
         showControls()
     }
 
@@ -785,6 +997,7 @@ class PlayerActivity : Activity(), SensorEventListener {
         leftPanel.visibility = View.VISIBLE
         rightPanel.visibility = View.VISIBLE
         btnClose.visibility = View.VISIBLE
+        btnScreen?.visibility = View.VISIBLE
         handler.removeCallbacks(hideControls)
         // auto-hide only when the controls sit over the video itself; the remote
         // screen is all theirs — hiding them there would just add taps
@@ -837,8 +1050,121 @@ class PlayerActivity : Activity(), SensorEventListener {
             for (h in trackHeights) entry("${h}p", qualityCap == h) { capQuality(h) }
             btnQuality.text = if (qualityCap == 0) "Auto" else "${qualityCap}p"
         }
+        // local files have a single encode — nothing to choose, so no button
+        val localFile = intent.data != null && streamUrl?.startsWith("http") != true
         btnQuality.visibility =
-            if (sources.size > 1 || trackHeights.size > 1) View.VISIBLE else View.GONE
+            if (!localFile && (sources.size > 1 || trackHeights.size > 1)) View.VISIBLE
+            else View.GONE
+    }
+
+    /**
+     * Audio track and subtitle picker, reusing the quality list as the popup. Both
+     * live in the media itself (a file with several dubs or subtitle tracks), so the
+     * button only appears when there is something to choose.
+     */
+    private fun buildTrackMenu() {
+        val p = player ?: return
+        trackList.removeAllViews()
+        val padH = (16 * resources.displayMetrics.density).toInt()
+        val padV = (8 * resources.displayMetrics.density).toInt()
+
+        fun header(text: String) {
+            trackList.addView(TextView(this).apply {
+                this.text = text
+                textSize = 9f
+                typeface = android.graphics.Typeface.MONOSPACE
+                letterSpacing = 0.18f
+                setPadding(padH, padV, padH, 2)
+                setTextColor(getColor(R.color.on_surface_variant))
+            })
+        }
+        fun entry(label: String, active: Boolean, onClick: () -> Unit) {
+            trackList.addView(TextView(this).apply {
+                text = label
+                textSize = 14f
+                setPadding(padH, padV, padH, padV)
+                setTextColor(getColor(if (active) R.color.primary else R.color.on_surface))
+                setOnClickListener { onClick(); showControls() }
+            })
+        }
+        fun select(group: Tracks.Group, index: Int) {
+            if (group.type == C.TRACK_TYPE_AUDIO) audioDisabled = false
+            p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+                .setOverrideForType(
+                    androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, index)
+                )
+                .setTrackTypeDisabled(group.type, false)
+                .build()
+            buildTrackMenu()
+        }
+        fun describe(f: androidx.media3.common.Format, i: Int): String {
+            val lang = f.language?.takeIf { it.isNotBlank() && it != "und" }
+            val label = f.label
+            return listOfNotNull(label, lang?.uppercase()).joinToString(" · ")
+                .ifEmpty { "Track ${i + 1}" }
+        }
+
+        for (type in listOf(C.TRACK_TYPE_AUDIO, C.TRACK_TYPE_TEXT)) {
+            val groups = p.currentTracks.groups.filter { it.type == type && it.length > 0 }
+            if (groups.isEmpty()) continue
+            header(if (type == C.TRACK_TYPE_AUDIO) "AUDIO" else "SUBTITLES")
+            if (type == C.TRACK_TYPE_TEXT) {
+                val off = p.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_TEXT)
+                entry("Off", off) {
+                    p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                        .build()
+                    listOfNotNull(subtitleView, glassesSubs).forEach {
+                        it.text = ""; it.visibility = View.GONE
+                    }
+                    buildTrackMenu()
+                }
+            }
+            for (g in groups) {
+                for (i in 0 until g.length) {
+                    val ok = g.isTrackSupported(i)
+                    val label = describe(g.getTrackFormat(i), i) +
+                            if (ok) "" else "   (not supported)"
+                    entry(label, g.isTrackSelected(i)) {
+                        if (ok) select(g, i)
+                        else sbsOverlay.flash("This device cannot decode that track")
+                    }
+                }
+            }
+        }
+        // subtitle size lives with the subtitle list — the only place it matters
+        if (p.currentTracks.groups.any { it.type == C.TRACK_TYPE_TEXT }) {
+            header("SUBTITLE SIZE")
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            fun sizeBtn(label: String, delta: Int) = TextView(this).apply {
+                text = label
+                textSize = 20f
+                gravity = Gravity.CENTER
+                setPadding(padH, padV, padH, padV)
+                setTextColor(getColor(R.color.on_surface))
+                setOnClickListener {
+                    subSizeSp = (subSizeSp + delta).coerceIn(12, 60)
+                    getSharedPreferences("neoxr", MODE_PRIVATE)
+                        .edit().putInt("subSize", subSizeSp).apply()
+                    listOfNotNull(subtitleView, glassesSubs)
+                        .forEach { it.textSize = subSizeSp.toFloat() }
+                    buildTrackMenu()
+                    showControls()
+                }
+                row.addView(this, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            }
+            sizeBtn("−", -2)
+            row.addView(TextView(this).apply {
+                text = "$subSizeSp"
+                textSize = 14f
+                typeface = android.graphics.Typeface.MONOSPACE
+                gravity = Gravity.CENTER
+                setTextColor(getColor(R.color.on_surface_variant))
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.2f))
+            sizeBtn("+", +2)
+            trackList.addView(row)
+        }
+        showPopup(trackScroll)
     }
 
     /** Pins an HLS/DASH stream to a variant height (0 = let ABR choose). */
@@ -1049,6 +1375,18 @@ class PlayerActivity : Activity(), SensorEventListener {
         (getSystemService(SENSOR_SERVICE) as SensorManager).unregisterListener(this)
         player?.pause()
         glView.onPause()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // release the glasses' IMU socket while off screen: it accepts one client,
+        // and holding it here would deny head tracking to the next player opened
+        if (headMode) {
+            headMode = false
+            headTracker?.stop()
+            headTracker = null
+            btnHead?.let { mark(it, false) }
+        }
     }
 
     override fun onDestroy() {

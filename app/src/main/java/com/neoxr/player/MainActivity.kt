@@ -39,9 +39,12 @@ class MainActivity : AppCompatActivity() {
 
             PLAYER
             Tap — show / hide the controls. Swipe — look around. Long press — center the view. Double tap — phone gyro on / off.
+            ◄◄ and ►► skip 15 s back and 30 s forward; hold them for 1 min back and 5 min forward.
             Left buttons — screen shape: Flat / Wide / 180° / 360°.
             Right buttons — layout: 2D / SBS / OU (top-bottom), W − / + — width, Z − / + — zoom.
-            "3D" in the bottom bar — depth − / + and eye swap ⇄.
+            "3D" in the bottom bar — depth − / +, eye swap ⇄, and H − / + for vertical squeeze.
+            "CC" appears when a video has several audio tracks or subtitles.
+            "Screen" appears when the phone has more than one display to render on.
 
             HEAD TRACKING
             The view follows your head, using the sensor inside the glasses.
@@ -86,16 +89,25 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // One video on the device: its URI, file name, duration and the folder it lives in.
+    private data class LocalVideo(
+        val uri: android.net.Uri, val name: String, val duration: String, val folder: String
+    )
+
+    private var localVideos = listOf<LocalVideo>()
+    private var openFolder: String? = null // null = folder list, otherwise its videos
+
     private fun showLocalVideos() {
         val wrap = wrapView ?: return
-        val rows = mutableListOf<Pair<android.net.Uri, String>>()
+        val found = mutableListOf<LocalVideo>()
         try {
             contentResolver.query(
                 android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
                 arrayOf(
                     android.provider.MediaStore.Video.Media._ID,
                     android.provider.MediaStore.Video.Media.DISPLAY_NAME,
-                    android.provider.MediaStore.Video.Media.DURATION
+                    android.provider.MediaStore.Video.Media.DURATION,
+                    android.provider.MediaStore.Video.Media.BUCKET_DISPLAY_NAME
                 ),
                 null, null,
                 android.provider.MediaStore.Video.Media.DATE_ADDED + " DESC"
@@ -105,17 +117,62 @@ class MainActivity : AppCompatActivity() {
                         android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
                         c.getLong(0)
                     )
-                    val dur = Deo.formatDuration((c.getLong(2) / 1000).toInt())
-                    rows.add(uri to "${c.getString(1) ?: "?"}  ·  $dur")
+                    found.add(
+                        LocalVideo(
+                            uri,
+                            c.getString(1) ?: "?",
+                            Deo.formatDuration((c.getLong(2) / 1000).toInt()),
+                            c.getString(3) ?: "Other"
+                        )
+                    )
                 }
             }
         } catch (e: Exception) {
             Toast.makeText(this, "Media query failed: ${e.message}", Toast.LENGTH_SHORT).show()
         }
-        wrap.findViewById<View>(R.id.fileEmpty).visibility =
-            if (rows.isEmpty()) View.VISIBLE else View.GONE
+        localVideos = found
+        openFolder = null
+        renderFileList()
+        wrap.findViewById<View>(R.id.fileOverlay).visibility = View.VISIBLE
+    }
+
+    /**
+     * Draws either the folder list or the videos inside [openFolder]. A flat list of
+     * every video on the device is unusable on a real library, so the first level
+     * groups by folder (MediaStore's bucket) with a count per row.
+     */
+    private fun renderFileList() {
+        val wrap = wrapView ?: return
+        val title = wrap.findViewById<TextView>(R.id.fileTitle)
         val list = wrap.findViewById<ListView>(R.id.fileList)
         val pad = (12 * resources.displayMetrics.density).toInt()
+
+        val folder = openFolder
+        // rows: label to action
+        val rows: List<Pair<String, () -> Unit>> = if (folder == null) {
+            title.text = "LOCAL VIDEOS"
+            localVideos.groupBy { it.folder }.entries
+                .sortedBy { it.key.lowercase() }
+                .map { (name, items) ->
+                    "▸  $name   (${items.size})" to { openFolder = name; renderFileList() }
+                }
+        } else {
+            title.text = "◂  ${folder.uppercase()}"
+            listOf<Pair<String, () -> Unit>>(
+                "◂  Back to folders" to { openFolder = null; renderFileList() }
+            ) + localVideos.filter { it.folder == folder }.map { v ->
+                "${v.name}   ·   ${v.duration}" to {
+                    startActivity(
+                        Intent(this, PlayerActivity::class.java)
+                            .setAction(Intent.ACTION_VIEW)
+                            .setData(v.uri)
+                    )
+                }
+            }
+        }
+
+        wrap.findViewById<View>(R.id.fileEmpty).visibility =
+            if (localVideos.isEmpty()) View.VISIBLE else View.GONE
         list.adapter = object : BaseAdapter() {
             override fun getCount() = rows.size
             override fun getItem(pos: Int) = rows[pos]
@@ -128,18 +185,11 @@ class MainActivity : AppCompatActivity() {
                     setTextColor(getColor(R.color.on_surface))
                     setPadding(pad, pad, pad, pad)
                 }
-                v.text = rows[pos].second
+                v.text = rows[pos].first
                 return v
             }
         }
-        list.setOnItemClickListener { _, _, pos, _ ->
-            startActivity(
-                Intent(this, PlayerActivity::class.java)
-                    .setAction(Intent.ACTION_VIEW)
-                    .setData(rows[pos].first)
-            )
-        }
-        wrap.findViewById<View>(R.id.fileOverlay).visibility = View.VISIBLE
+        list.setOnItemClickListener { _, _, pos, _ -> rows[pos].second() }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

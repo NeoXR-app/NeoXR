@@ -35,8 +35,18 @@
         android:gravity="center_vertical"
         android:orientation="horizontal">
 
-        <!-- U+25BA/U+2759: glyphs with no emoji variant — U+25B6/U+23F8 render as
-             colored emoji on some vendor fonts and ignore textColor -->
+        <!-- U+25C4/U+25BA/U+2759: glyphs with no emoji variant — U+25B6/U+23F8 render
+             as colored emoji on some vendor fonts and ignore textColor -->
+        <TextView
+            android:id="@+id/btnRw"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:padding="10dp"
+            android:text="◄◄"
+            android:textColor="@color/on_surface_variant"
+            android:textSize="15sp" />
+
         <TextView
             android:id="@+id/btnPlay"
             android:layout_width="wrap_content"
@@ -45,7 +55,17 @@
             android:padding="10dp"
             android:text="►"
             android:textColor="@color/on_surface"
-            android:textSize="18sp" />
+            android:textSize="20sp" />
+
+        <TextView
+            android:id="@+id/btnFf"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:padding="10dp"
+            android:text="►►"
+            android:textColor="@color/on_surface_variant"
+            android:textSize="15sp" />
 
         <!-- monospace + fixed min width: proportional digits shift the buttons
              sideways on every tick, and they are already half-size in SBS copies -->
@@ -92,6 +112,18 @@
             android:textColor="@color/primary"
             android:textSize="14sp" />
 
+        <!-- audio track / subtitle picker; hidden when a video has nothing to choose -->
+        <TextView
+            android:id="@+id/btnTracks"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:padding="10dp"
+            android:text="CC"
+            android:textColor="@color/primary"
+            android:textSize="14sp"
+            android:visibility="gone" />
+
         <TextView
             android:id="@+id/btnQuality"
             android:layout_width="wrap_content"
@@ -105,8 +137,10 @@
     </LinearLayout>
     </LinearLayout>
 
-    <!-- stereo tuning: opened by the 3D button; buttons are huge on purpose — the
-         whole overlay is drawn 2x squeezed for the glasses, small targets are unhittable -->
+    <!-- stereo + geometry tuning: opened by the 3D button; buttons are huge on
+         purpose — the whole overlay is drawn 2x squeezed for the glasses, small
+         targets are unhittable. Two rows: convergence/eye-swap, then the vertical
+         squeeze (the side columns have no height budget left for it) -->
     <LinearLayout
         android:id="@+id/eyePanel"
         android:layout_width="match_parent"
@@ -116,8 +150,13 @@
         android:layout_marginEnd="112dp"
         android:layout_marginBottom="76dp"
         android:background="@drawable/bg_input"
-        android:orientation="horizontal"
+        android:orientation="vertical"
         android:visibility="gone">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
 
         <TextView
             android:id="@+id/btnEyeMinus"
@@ -163,6 +202,131 @@
             android:textColor="@color/on_surface"
             android:textSize="21sp" />
     </LinearLayout>
+
+    <!-- width and height squeeze: in landscape the side columns have no height
+         budget left, so both live here; portrait moves them into the right column -->
+    <LinearLayout
+        android:id="@+id/panelWidthRow"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/btnWMinus"
+            android:layout_width="0dp"
+            android:layout_height="60dp"
+            android:layout_weight="1"
+            android:background="?android:attr/selectableItemBackground"
+            android:gravity="center"
+            android:text="−"
+            android:textColor="@color/on_surface"
+            android:textSize="24sp" />
+
+        <TextView
+            android:id="@+id/txtW"
+            android:layout_width="0dp"
+            android:layout_height="60dp"
+            android:layout_weight="1.4"
+            android:fontFamily="monospace"
+            android:gravity="center"
+            android:text="W 100"
+            android:textColor="@color/on_surface_variant"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/btnWPlus"
+            android:layout_width="0dp"
+            android:layout_height="60dp"
+            android:layout_weight="1"
+            android:background="?android:attr/selectableItemBackground"
+            android:gravity="center"
+            android:text="+"
+            android:textColor="@color/on_surface"
+            android:textSize="24sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/panelHeightRow"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/btnHMinus"
+            android:layout_width="0dp"
+            android:layout_height="60dp"
+            android:layout_weight="1"
+            android:background="?android:attr/selectableItemBackground"
+            android:gravity="center"
+            android:text="−"
+            android:textColor="@color/on_surface"
+            android:textSize="24sp" />
+
+        <TextView
+            android:id="@+id/txtH"
+            android:layout_width="0dp"
+            android:layout_height="60dp"
+            android:layout_weight="1.4"
+            android:fontFamily="monospace"
+            android:gravity="center"
+            android:text="H 100"
+            android:textColor="@color/on_surface_variant"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/btnHPlus"
+            android:layout_width="0dp"
+            android:layout_height="60dp"
+            android:layout_weight="1"
+            android:background="?android:attr/selectableItemBackground"
+            android:gravity="center"
+            android:text="+"
+            android:textColor="@color/on_surface"
+            android:textSize="24sp" />
+    </LinearLayout>
+    </LinearLayout>
+
+    <!-- subtitles are drawn here, not by the player: the video goes to a GL texture,
+         so ExoPlayer's own subtitle view would never reach the glasses. Sitting in
+         the SBS overlay means each eye gets a copy. -->
+    <TextView
+        android:id="@+id/subtitleText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginStart="80dp"
+        android:layout_marginEnd="80dp"
+        android:layout_marginBottom="84dp"
+        android:gravity="center"
+        android:shadowColor="#000000"
+        android:shadowDx="0"
+        android:shadowDy="0"
+        android:shadowRadius="6"
+        android:textColor="#FFFFFF"
+        android:textSize="26sp"
+        android:visibility="gone" />
+
+    <!-- track menu: its own container (otherwise onTracksChanged rebuilding the
+         quality list would overwrite it while open). Positioned in code right above
+         its button and raised above everything else — see showPopup. Scrolls, since
+         a file can carry more tracks than fit on screen. -->
+    <ScrollView
+        android:id="@+id/trackScroll"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:background="@drawable/bg_input"
+        android:paddingTop="4dp"
+        android:paddingBottom="4dp"
+        android:scrollbars="none"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:id="@+id/trackList"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+    </ScrollView>
 
     <LinearLayout
         android:id="@+id/qualityList"

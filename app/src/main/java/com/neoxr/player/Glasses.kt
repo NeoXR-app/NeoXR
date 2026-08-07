@@ -21,18 +21,69 @@ import android.widget.TextView
 
 /** The glasses over USB-C DP alt mode are a real external display. */
 object Glasses {
+
+    private const val PREF_DISPLAY = "outputDisplay" // user's manual pick, by name
+
     /**
-     * The first non-default display that carries [Display.FLAG_PRESENTATION].
-     * The flag is what distinguishes an attached screen from a second built-in
-     * panel: foldables expose two internal displays, so `displayId != DEFAULT`
-     * alone would pick the wrong one.
+     * Vendor names XR glasses report through [Display.getName]. Many devices never
+     * expose one (Android substitutes a generic localized "HDMI screen" instead),
+     * which is why [find] also falls back to panel shape.
      */
-    fun find(activity: Activity): Display? =
+    private val KNOWN = Regex("xreal|nreal|viture|rokid|rayneo|inmo|even ?realities", RegexOption.IGNORE_CASE)
+
+    fun isKnownGlasses(name: String) = KNOWN.containsMatchIn(name)
+
+    /**
+     * Every display that can host content: non-default and carrying
+     * [Display.FLAG_PRESENTATION]. The flag separates an attached screen from a
+     * second built-in panel, but it does not exclude one: foldables and dual-screen
+     * handhelds expose their extra internal panel this way too, which is why the
+     * choice below is more than "take the first".
+     */
+    fun candidates(activity: Activity): List<Display> =
         (activity.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager).displays
-            .firstOrNull {
+            .filter {
                 it.displayId != Display.DEFAULT_DISPLAY &&
                         (it.flags and Display.FLAG_PRESENTATION) != 0
             }
+
+    /**
+     * The display to render on: the user's manual pick if it is still attached,
+     * otherwise the best guess — a display whose name identifies XR glasses, then
+     * one with a 16:9 landscape panel (what glasses report), then the first
+     * candidate.
+     */
+    fun find(activity: Activity): Display? {
+        val all = candidates(activity)
+        if (all.isEmpty()) return null
+        val saved = activity.getSharedPreferences("neoxr", Context.MODE_PRIVATE)
+            .getString(PREF_DISPLAY, null)
+        all.firstOrNull { it.name == saved }?.let { return it }
+        all.firstOrNull { KNOWN.containsMatchIn(it.name ?: "") }?.let { return it }
+        all.firstOrNull { d ->
+            val m = d.mode ?: return@firstOrNull false
+            val w = m.physicalWidth
+            val h = m.physicalHeight
+            w > h && Math.abs(w.toFloat() / h - 16f / 9f) < 0.05f
+        }?.let { return it }
+        return all.first()
+    }
+
+    /** Remembers a manual choice (by display name) for the next launch. */
+    fun remember(activity: Activity, display: Display) {
+        activity.getSharedPreferences("neoxr", Context.MODE_PRIVATE)
+            .edit().putString(PREF_DISPLAY, display.name).apply()
+    }
+
+    /** Moves the manual pick to the next candidate; null when there is nothing to switch to. */
+    fun cycle(activity: Activity): Display? {
+        val all = candidates(activity)
+        if (all.size < 2) return null
+        val current = find(activity) ?: return null
+        val next = all[(all.indexOfFirst { it.displayId == current.displayId } + 1) % all.size]
+        remember(activity, next)
+        return next
+    }
 }
 
 /**
@@ -49,6 +100,20 @@ class GlassesOut(
 ) {
 
     private val presentation = Presentation(activity, glassesDisplay)
+
+    /**
+     * Label for the display in use, shown on the remote so a wrong auto-pick is
+     * visible. Vendor names only appear on some devices — elsewhere Android reports
+     * a generic, localized "HDMI screen", so the resolution is the useful part.
+     */
+    val displayName: String
+        get() {
+            val name = glassesDisplay.name.orEmpty()
+            if (Glasses.isKnownGlasses(name)) return name
+            val m = glassesDisplay.mode
+            return if (m != null) "GLASSES · ${m.physicalWidth}×${m.physicalHeight}"
+            else "GLASSES CONNECTED"
+        }
 
     // The densest mode the glasses offer, fastest refresh among equals (the panels
     // are natively 120 Hz). Phone/glasses links commonly top out at 1920x1080 with
@@ -309,8 +374,12 @@ class GlassesOut(
                 start()
             }
             status.addView(dot)
+            // name the display in use: on dual-screen devices the auto-pick can land
+            // on the wrong panel, and this is what tells the user it did
             status.addView(TextView(activity).apply {
-                text = "GLASSES CONNECTED"
+                // the wrap is not attached to its window yet, so ask the display the
+                // presentation was built with — wrap.display would still be null here
+                text = out.displayName.uppercase().take(28)
                 textSize = 11f
                 typeface = android.graphics.Typeface.MONOSPACE
                 letterSpacing = 0.18f
@@ -331,9 +400,17 @@ class GlassesOut(
             }
             paintSbs()
 
+            // "Screen" appears only when there is another display to move to — on a
+            // dual-screen handheld the auto-pick may choose the built-in second panel
+            val screenBtn = if (Glasses.candidates(activity).size > 1) {
+                stripButton(activity, "Screen") {
+                    Glasses.cycle(activity)?.let { activity.recreate() }
+                }
+            } else null
+
             val buttons =
                 listOf(stripButton(activity, "← Back") { activity.onBackPressed() }, sbsBtn) +
-                        extras
+                        extras + listOfNotNull(screenBtn)
             for (row in buttons.chunked(4)) {
                 val line = LinearLayout(activity).apply {
                     orientation = LinearLayout.HORIZONTAL
