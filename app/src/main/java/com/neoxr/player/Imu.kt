@@ -248,13 +248,9 @@ class HeadTracker(private val context: Context, private val onStatus: (String) -
                 status("Head tracking ON")
                 readLoop(sock.getInputStream())
             } catch (e: Exception) {
-                // by far the most common cause is a VPN that captures the glasses'
-                // link-local subnet, so name the fix instead of the exception
-                if (running) status(
-                    "Head: can't reach the glasses.\n" +
-                            "Turn the VPN off, or exclude 169.254.0.0/16 /\n" +
-                            "allow app bypass in its settings (OpenVPN profile)."
-                )
+                // Report what actually went wrong. Blaming a VPN unconditionally
+                // sent users without one chasing a setting they do not have.
+                if (running) status(diagnose(cm))
             } finally {
                 stopNet()
             }
@@ -264,6 +260,37 @@ class HeadTracker(private val context: Context, private val onStatus: (String) -
                 val cb = onStopped
                 if (cb != null) android.os.Handler(context.mainLooper).post { cb() }
             }
+        }
+    }
+
+    /**
+     * Why the glasses could not be reached, in the user's terms. Distinguishes the
+     * three real cases: the phone never brought up the glasses' network at all
+     * (firmware or the glasses' ethernet toggle), something captures that subnet
+     * (a VPN), or the network is there but the sensor service refused us.
+     */
+    private fun diagnose(cm: ConnectivityManager): String {
+        val addresses = ncmAddresses()
+        val vpnUp = cm.allNetworks.any {
+            cm.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+        }
+        return when {
+            addresses.isEmpty() && vpnUp ->
+                "Head: no connection to the glasses.\n" +
+                        "A VPN is active and may be hiding it — turn the VPN off, " +
+                        "or allow apps to bypass it, and try again."
+            addresses.isEmpty() ->
+                "Head: the phone sees no network from the glasses.\n" +
+                        "Check that the glasses run recent firmware and that ethernet " +
+                        "is enabled in their developer menu. Head tracking needs the " +
+                        "XREAL One series."
+            vpnUp ->
+                "Head: the glasses are visible but refused the connection.\n" +
+                        "A VPN is active — turn it off or allow apps to bypass it."
+            else ->
+                "Head: the glasses are visible but the sensor did not answer.\n" +
+                        "Close other apps that may use it, unplug and replug the " +
+                        "glasses, and check their firmware."
         }
     }
 

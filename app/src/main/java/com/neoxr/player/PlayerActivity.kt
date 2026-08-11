@@ -73,8 +73,10 @@ class PlayerActivity : Activity(), SensorEventListener {
     private lateinit var rightPanel: LinearLayout
     private lateinit var btnClose: TextView
     private var btnScreen: TextView? = null // display switcher (multi-display devices)
-    private var subtitleView: TextView? = null // phone-side subtitles (no glasses)
-    private var glassesSubs: TextView? = null  // subtitles shown on the glasses
+    // media3's SubtitleView, not a TextView: film rips often carry bitmap subtitles
+    // (PGS, VobSub) which have no text at all, and it renders both kinds.
+    private var subtitleView: androidx.media3.ui.SubtitleView? = null // phone-side
+    private var glassesSubs: androidx.media3.ui.SubtitleView? = null  // on the glasses
     private var btnTracks: TextView? = null
     private var audioDisabled = false // set after an undecodable audio track
     // Subtitle size in sp. The glasses squeeze each half horizontally, so text that
@@ -235,21 +237,14 @@ class PlayerActivity : Activity(), SensorEventListener {
                     FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
                 ))
                 val subs = SbsFrameLayout(it.context).apply { sbs = true }
-                subs.addView(TextView(it.context).apply {
+                subs.addView(androidx.media3.ui.SubtitleView(it.context).apply {
                     glassesSubs = this
-                    textSize = subSizeSp.toFloat()
-                    gravity = Gravity.CENTER
-                    setTextColor(0xFFFFFFFF.toInt())
-                    setShadowLayer(6f, 0f, 0f, 0xFF000000.toInt())
-                    visibility = View.GONE
+                    styleSubtitles(this)
                     layoutParams = FrameLayout.LayoutParams(
                         FrameLayout.LayoutParams.MATCH_PARENT,
-                        FrameLayout.LayoutParams.WRAP_CONTENT,
-                        Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                        FrameLayout.LayoutParams.MATCH_PARENT
                     ).apply {
-                        val dp = resources.displayMetrics.density
-                        marginStart = (40 * dp).toInt(); marginEnd = (40 * dp).toInt()
-                        bottomMargin = (40 * dp).toInt()
+                        bottomMargin = (36 * resources.displayMetrics.density).toInt()
                     }
                 })
                 glassesRoot.addView(subs, FrameLayout.LayoutParams(
@@ -299,8 +294,8 @@ class PlayerActivity : Activity(), SensorEventListener {
         btnRw.setOnLongClickListener { seekBy(-60_000); true }
         btnFf.setOnLongClickListener { seekBy(+300_000); true }
 
-        subtitleView = sbsOverlay.findViewById<TextView>(R.id.subtitleText)
-            .apply { textSize = subSizeSp.toFloat() }
+        subtitleView = sbsOverlay.findViewById<androidx.media3.ui.SubtitleView>(R.id.subtitleText)
+            .apply { styleSubtitles(this); visibility = View.VISIBLE }
         btnTracks = sbsOverlay.findViewById<TextView>(R.id.btnTracks).apply {
             setOnClickListener {
                 if (trackScroll.visibility == View.VISIBLE) trackScroll.visibility = View.GONE
@@ -527,6 +522,15 @@ class PlayerActivity : Activity(), SensorEventListener {
         if (player != null) return
         videoSurface = Surface(st)
         player = ExoPlayer.Builder(this)
+            // prefer the bundled FFmpeg decoders: most phones have no hardware
+            // decoder for AC-3, E-AC-3, DTS or TrueHD, which are what film rips use
+            .setRenderersFactory(
+                androidx.media3.exoplayer.DefaultRenderersFactory(this)
+                    .setExtensionRendererMode(
+                        androidx.media3.exoplayer.DefaultRenderersFactory
+                            .EXTENSION_RENDERER_MODE_PREFER
+                    )
+            )
             // proper media-app citizenship: request audio focus (pause when another
             // app plays, duck for notifications) and stop on headphone unplug
             .setAudioAttributes(
@@ -565,18 +569,21 @@ class PlayerActivity : Activity(), SensorEventListener {
                         sbsOverlay.flash("This audio track is not supported — playing without sound")
                         return
                     }
-                    sbsOverlay.flash("Player error: ${error.message}")
+                    // include the error code: the message alone is often a generic
+                    // "Source error" and the code is what identifies the real cause
+                    sbsOverlay.flash(
+                        "Player error: ${error.errorCodeName}\n${error.message}"
+                    )
                 }
 
                 // subtitles come as cues because the video itself lives in a GL
                 // texture — ExoPlayer's own subtitle view has nothing to draw on
                 override fun onCues(cues: androidx.media3.common.text.CueGroup) {
-                    val text = cues.cues.mapNotNull { it.text }.joinToString("\n")
                     // whichever surface currently shows the video gets the subtitles
                     val target = glassesSubs ?: subtitleView
                     target?.let {
-                        it.text = text
-                        it.visibility = if (text.isBlank()) View.GONE else View.VISIBLE
+                        it.setCues(cues.cues)
+                        it.visibility = View.VISIBLE
                     }
                 }
 
@@ -960,6 +967,23 @@ class PlayerActivity : Activity(), SensorEventListener {
         showControls()
     }
 
+    /**
+     * White text with a heavy outline at the user's size. The glasses squeeze each
+     * half horizontally, so subtitles need to be much larger than on a phone;
+     * setFixedTextSize also stops the view scaling them by system caption settings.
+     */
+    private fun styleSubtitles(v: androidx.media3.ui.SubtitleView) {
+        v.setStyle(
+            androidx.media3.ui.CaptionStyleCompat(
+                0xFFFFFFFF.toInt(), 0x00000000, 0x00000000,
+                androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE,
+                0xFF000000.toInt(), null
+            )
+        )
+        v.setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, subSizeSp.toFloat())
+        v.setApplyEmbeddedStyles(false)
+    }
+
     /** Manual vertical squeeze — for material encoded with the wrong vertical scale. */
     private fun adjustHeight(delta: Int) {
         heightPct = (heightPct + delta).coerceIn(50, 120)
@@ -1115,7 +1139,7 @@ class PlayerActivity : Activity(), SensorEventListener {
                         .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
                         .build()
                     listOfNotNull(subtitleView, glassesSubs).forEach {
-                        it.text = ""; it.visibility = View.GONE
+                        it.setCues(emptyList())
                     }
                     buildTrackMenu()
                 }
@@ -1146,8 +1170,7 @@ class PlayerActivity : Activity(), SensorEventListener {
                     subSizeSp = (subSizeSp + delta).coerceIn(12, 60)
                     getSharedPreferences("neoxr", MODE_PRIVATE)
                         .edit().putInt("subSize", subSizeSp).apply()
-                    listOfNotNull(subtitleView, glassesSubs)
-                        .forEach { it.textSize = subSizeSp.toFloat() }
+                    listOfNotNull(subtitleView, glassesSubs).forEach { styleSubtitles(it) }
                     buildTrackMenu()
                     showControls()
                 }

@@ -289,21 +289,11 @@
     <!-- subtitles are drawn here, not by the player: the video goes to a GL texture,
          so ExoPlayer's own subtitle view would never reach the glasses. Sitting in
          the SBS overlay means each eye gets a copy. -->
-    <TextView
+    <androidx.media3.ui.SubtitleView
         android:id="@+id/subtitleText"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom|center_horizontal"
-        android:layout_marginStart="80dp"
-        android:layout_marginEnd="80dp"
-        android:layout_marginBottom="84dp"
-        android:gravity="center"
-        android:shadowColor="#000000"
-        android:shadowDx="0"
-        android:shadowDy="0"
-        android:shadowRadius="6"
-        android:textColor="#FFFFFF"
-        android:textSize="26sp"
+        android:layout_height="match_parent"
+        android:layout_marginBottom="70dp"
         android:visibility="gone" />
 
     <!-- track menu: its own container (otherwise onTracksChanged rebuilding the

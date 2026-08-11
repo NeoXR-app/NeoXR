@@ -14,14 +14,18 @@ if (keystorePropsFile.exists()) {
 
 android {
     namespace 'com.neoxr.player'
-    compileSdk 34
+    compileSdk 35
 
     defaultConfig {
         applicationId "com.neoxr.player"
         minSdk 26
         targetSdk 34
-        versionCode 2
-        versionName "1.1"
+        versionCode 3
+        versionName "1.2"
+
+        // the FFmpeg decoders ship a native lib per ABI; phones that can drive
+        // glasses over USB-C DisplayPort are all arm64, so the rest is dead weight
+        ndk { abiFilters 'arm64-v8a' }
     }
 
     signingConfigs {
@@ -63,9 +67,12 @@ android {
 dependencies {
     implementation 'com.google.android.material:material:1.12.0'
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
-    implementation 'androidx.media3:media3-exoplayer:1.4.1'
-    implementation 'androidx.media3:media3-exoplayer-hls:1.4.1'
-    implementation 'androidx.media3:media3-ui:1.4.1'
+    implementation 'androidx.media3:media3-exoplayer:1.5.1'
+    implementation 'androidx.media3:media3-exoplayer-hls:1.5.1'
+    implementation 'androidx.media3:media3-ui:1.5.1'
+    // FFmpeg audio decoders (AC-3, E-AC-3, DTS, TrueHD...) prebuilt for media3 by
+    // the Jellyfin project — phones rarely ship hardware decoders for these
+    implementation 'org.jellyfin.media3:media3-ffmpeg-decoder:1.5.0+1'
     implementation 'com.github.bumptech.glide:glide:4.16.0'
 
     testImplementation 'junit:junit:4.13.2'

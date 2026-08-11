@@ -47,6 +47,8 @@ mirroring mode:
   (local videos are grouped by folder).
 - **Picture controls:** zoom, width, height, stereo depth and eye swap, per video.
 - **Audio tracks and subtitles** for files that carry more than one.
+- **Plays the audio your phone can't.** Bundled FFmpeg decoders handle AC-3, E-AC-3,
+  DTS and TrueHD — the formats most film rips use and most phones lack.
 - **No account, no ads, no tracking.** The app has no analytics and makes no network
   requests beyond the sites you open yourself.
 
@@ -121,9 +123,11 @@ guessed wrong about which one is the glasses.
 
 ## Head tracking
 
-The XREAL One series exposes its motion sensor as a network service on the glasses
-themselves. NeoXR reads that sensor and turns head movement into camera movement, so
-the video stays in place while you look around.
+**Requires XREAL One, One Pro or One S.** Those glasses expose their motion sensor
+as a network service, which NeoXR reads and turns into camera movement, so the video
+stays in place while you look around. Air-series glasses have no such service — on
+them, and on any other glasses, use the phone's gyroscope instead (double-tap in the
+player, then turn the phone to turn the view).
 
 To use it:
 
@@ -155,6 +159,18 @@ profile settings).
   edges are not perfectly correct.
 - Sites that need a login may work in the built-in browser, but NeoXR has no account
   support of its own.
+- **Subtitle formats:** SRT, ASS/SSA, WebVTT, TTML and PGS (Blu-ray) work. VobSub
+  (the DVD format, `S_VOBSUB` in MKV) is not supported by the underlying player and
+  is marked as such in the track list.
+- **Head tracking needs XREAL One-series glasses.** Viture and other brands keep
+  their sensor behind a closed SDK with no public protocol documentation, so it
+  cannot be supported from open sources. The phone gyroscope works with any glasses.
+- **Samsung DeX is not supported.** In DeX the file browser opens behind the main
+  window and playback does not start. Switch the phone to screen mirroring instead.
+- **A 360° video does not surround you.** The glasses show roughly a 50° field of
+  view, so any video is a window into the sphere rather than a dome around your head
+  — you look around inside it by swiping, by the phone gyroscope, or with head
+  tracking.
 
 ## Build from source
 
@@ -175,6 +191,12 @@ Device reports are the most useful contribution. NeoXR is developed on one pair 
 glasses and one phone, so reports from other hardware are the only way to learn what
 works. Please use the
 [device report](../../issues/new?template=device_report.md) template.
+
+## Third-party components
+
+Audio decoding for formats Android does not cover uses
+[FFmpeg](https://ffmpeg.org/) (LGPL-2.1), packaged for Media3 by the
+[Jellyfin project](https://github.com/jellyfin/jellyfin-androidx-media).
 
 ## License
 
