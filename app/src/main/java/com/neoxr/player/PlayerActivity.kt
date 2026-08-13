@@ -82,6 +82,12 @@ class PlayerActivity : Activity(), SensorEventListener {
     // Subtitle size in sp. The glasses squeeze each half horizontally, so text that
     // looks fine on a phone reads tiny there — hence a large default and a control.
     private var subSizeSp = 26
+    private var subColor = 0xFFFFFFFF.toInt()
+    // Some releases ship subtitle tracks already rendered as a stereo pair (one for
+    // each eye). Duplicating those per eye — right for ordinary tracks — shows four
+    // copies, so the duplication has to be switchable.
+    private var subStereoSource = false
+    private var subsWrap: SbsFrameLayout? = null
     private lateinit var btnRw: TextView
     private lateinit var btnFf: TextView
     private var playGroup: LinearLayout? = null // RW/play/FF, regrouped in portrait
@@ -152,7 +158,11 @@ class PlayerActivity : Activity(), SensorEventListener {
         super.onCreate(savedInstanceState)
         fullscreenOverCutout()
         resumePos = savedInstanceState?.getLong("pos") ?: 0L
-        subSizeSp = getSharedPreferences("neoxr", MODE_PRIVATE).getInt("subSize", 26)
+        getSharedPreferences("neoxr", MODE_PRIVATE).let { p ->
+            subSizeSp = p.getInt("subSize", 26)
+            subColor = p.getInt("subColor", 0xFFFFFFFF.toInt())
+            subStereoSource = p.getBoolean("subStereo", false)
+        }
         // diagnostic pass: dump every display the system exposes
         for (d in (getSystemService(DISPLAY_SERVICE) as DisplayManager).displays) {
             android.util.Log.i(
@@ -236,7 +246,8 @@ class PlayerActivity : Activity(), SensorEventListener {
                 glassesRoot.addView(glView, FrameLayout.LayoutParams(
                     FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
                 ))
-                val subs = SbsFrameLayout(it.context).apply { sbs = true }
+                val subs = SbsFrameLayout(it.context).apply { sbs = !subStereoSource }
+                subsWrap = subs
                 subs.addView(androidx.media3.ui.SubtitleView(it.context).apply {
                     glassesSubs = this
                     styleSubtitles(this)
@@ -254,8 +265,17 @@ class PlayerActivity : Activity(), SensorEventListener {
                 it.show()
                 android.util.Log.i("NeoXR", "presentation shown on display ${ext?.displayId}")
             } catch (e: Exception) {
+                // The display listed itself but refuses windows. Rather than leave a
+                // remote controlling nothing, move the video back onto the phone.
                 android.util.Log.e("NeoXR", "presentation FAILED: $e")
-                sbsOverlay.flash("Glasses output failed: ${e.message}")
+                it.dismiss()
+                presentation = null
+                glassesDisplay = null
+                levelView?.let { lv -> root.removeView(lv) }
+                (glView.parent as? android.view.ViewGroup)?.removeView(glView)
+                root.addView(glView, 0)
+                sbsOverlay.sbs = true
+                sbsOverlay.flash("Glasses output unavailable — playing on the phone")
             }
         }
         controlsBar = sbsOverlay.findViewById(R.id.controlsBar)
@@ -326,6 +346,43 @@ class PlayerActivity : Activity(), SensorEventListener {
         sbsOverlay.findViewById<TextView>(R.id.btnEyePlus).setOnClickListener { adjustEyeShift(2) }
         sbsOverlay.findViewById<TextView>(R.id.btnHMinus).setOnClickListener { adjustHeight(-5) }
         sbsOverlay.findViewById<TextView>(R.id.btnHPlus).setOnClickListener { adjustHeight(+5) }
+        // phone playback only: the glasses need the pair, the phone screen does not
+        sbsOverlay.findViewById<TextView>(R.id.btnMono).apply {
+            if (glassesDisplay == null) {
+                visibility = View.VISIBLE
+                fun paint() {
+                    text = "Output: " + if (renderer.monoOutput) "single view" else "stereo pair"
+                    setTextColor(getColor(
+                        if (renderer.monoOutput) R.color.primary else R.color.on_surface_variant
+                    ))
+                }
+                paint()
+                setOnClickListener {
+                    renderer.monoOutput = !renderer.monoOutput
+                    sbsOverlay.sbs = !renderer.monoOutput
+                    paint()
+                    showControls()
+                }
+            }
+        }
+        sbsOverlay.findViewById<TextView>(R.id.btnAmbient).apply {
+            fun paint() {
+                text = "Ambient glow: " + if (renderer.ambient) "on" else "off"
+                setTextColor(getColor(
+                    if (renderer.ambient) R.color.primary else R.color.on_surface_variant
+                ))
+            }
+            renderer.ambient = getSharedPreferences("neoxr", MODE_PRIVATE)
+                .getBoolean("ambient", false)
+            paint()
+            setOnClickListener {
+                renderer.ambient = !renderer.ambient
+                getSharedPreferences("neoxr", MODE_PRIVATE)
+                    .edit().putBoolean("ambient", renderer.ambient).apply()
+                paint()
+                showControls()
+            }
+        }
         sbsOverlay.findViewById<TextView>(R.id.btnWMinus).setOnClickListener { adjustWidth(-5) }
         sbsOverlay.findViewById<TextView>(R.id.btnWPlus).setOnClickListener { adjustWidth(+5) }
         sbsOverlay.findViewById<TextView>(R.id.btnEyeSwap).setOnClickListener { btn ->
@@ -603,6 +660,8 @@ class PlayerActivity : Activity(), SensorEventListener {
                 }
 
                 override fun onVideoSizeChanged(size: VideoSize) {
+                    // the flat screen needs the frame shape to keep its proportions
+                    renderer.setVideoSize(size.width, size.height)
                     // metadata-less streams only: refine the URL guess once with the
                     // real frame aspect, then leave the format alone (manual wins)
                     if (formatFromFeed || !formatAuto || size.width == 0) return
@@ -622,6 +681,7 @@ class PlayerActivity : Activity(), SensorEventListener {
         screenAngle = angle
         stereo = layout
         renderer.configure(angle, layout)
+        player?.videoSize?.let { renderer.setVideoSize(it.width, it.height) }
         for ((a, b) in screenBtns) mark(b, a == angle)
         for ((l, b) in layoutBtns) mark(b, l == layout)
     }
@@ -975,7 +1035,7 @@ class PlayerActivity : Activity(), SensorEventListener {
     private fun styleSubtitles(v: androidx.media3.ui.SubtitleView) {
         v.setStyle(
             androidx.media3.ui.CaptionStyleCompat(
-                0xFFFFFFFF.toInt(), 0x00000000, 0x00000000,
+                subColor, 0x00000000, 0x00000000,
                 androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE,
                 0xFF000000.toInt(), null
             )
@@ -1186,6 +1246,47 @@ class PlayerActivity : Activity(), SensorEventListener {
             }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.2f))
             sizeBtn("+", +2)
             trackList.addView(row)
+
+            header("SUBTITLE COLOUR")
+            val colours = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            for ((name, argb) in listOf(
+                "White" to 0xFFFFFFFF.toInt(),
+                "Yellow" to 0xFFFFE44D.toInt(),
+                "Cyan" to 0xFF6FE7FF.toInt(),
+                "Green" to 0xFF8CFF8C.toInt()
+            )) {
+                colours.addView(TextView(this).apply {
+                    text = if (subColor == argb) "●" else "○"
+                    textSize = 20f
+                    gravity = Gravity.CENTER
+                    setPadding(padH, padV, padH, padV)
+                    setTextColor(argb)
+                    contentDescription = name
+                    setOnClickListener {
+                        subColor = argb
+                        getSharedPreferences("neoxr", MODE_PRIVATE)
+                            .edit().putInt("subColor", argb).apply()
+                        listOfNotNull(subtitleView, glassesSubs).forEach { styleSubtitles(it) }
+                        buildTrackMenu()
+                        showControls()
+                    }
+                }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            }
+            trackList.addView(colours)
+
+            // Tracks authored for 3D releases already carry a left/right pair, so
+            // duplicating them per eye yields four copies — this turns that off.
+            header("SUBTITLE SOURCE")
+            entry(
+                if (subStereoSource) "Already 3D (no duplication)" else "Normal (one per eye)",
+                false
+            ) {
+                subStereoSource = !subStereoSource
+                getSharedPreferences("neoxr", MODE_PRIVATE)
+                    .edit().putBoolean("subStereo", subStereoSource).apply()
+                subsWrap?.sbs = !subStereoSource
+                buildTrackMenu()
+            }
         }
         showPopup(trackScroll)
     }

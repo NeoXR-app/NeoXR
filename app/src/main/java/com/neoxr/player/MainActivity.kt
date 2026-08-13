@@ -47,11 +47,11 @@ class MainActivity : AppCompatActivity() {
             "Screen" appears when the phone has more than one display to render on.
 
             HEAD TRACKING
-            The view follows your head, using the sensor inside the glasses. Needs XREAL One, One Pro or One S — other glasses have no such sensor, use the phone gyro instead (double tap).
+            The view follows your head, using the sensor inside the glasses. Works on XREAL One and Air series; on other glasses use the phone gyro instead (double tap).
             1. In the glasses' own menu: Stabilizer OFF, mode Follow (not Anchor), latest firmware.
-            2. Open a video and press "Head" in the left column (shown only with glasses connected).
+            2. Open a video and press "Head" in the left column (shown only with glasses connected). On Air series, allow the USB permission Android asks for.
             3. Look forward and long-press to center.
-            Press "Head" again to return to the phone gyro. If a VPN app runs on the phone, enable "allow apps to bypass VPN" in its settings — otherwise head tracking cannot reach the glasses.
+            Press "Head" again to return to the phone gyro. On One series, a VPN can block the connection — enable "allow apps to bypass VPN" in its settings if head tracking cannot reach the glasses.
         """.trimIndent()
     }
 

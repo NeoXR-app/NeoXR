@@ -245,6 +245,31 @@
             android:textSize="24sp" />
     </LinearLayout>
 
+    <!-- stereo/mono output, phone playback only: without glasses a single view is
+         what you want to look at -->
+    <TextView
+        android:id="@+id/btnMono"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:background="?android:attr/selectableItemBackground"
+        android:gravity="center"
+        android:text="Output: stereo pair"
+        android:textColor="@color/on_surface_variant"
+        android:textSize="13sp"
+        android:visibility="gone" />
+
+    <!-- ambient backdrop toggle: fills the black surround with the video's own
+         colour, for flat and wide screens -->
+    <TextView
+        android:id="@+id/btnAmbient"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:background="?android:attr/selectableItemBackground"
+        android:gravity="center"
+        android:text="Ambient glow: off"
+        android:textColor="@color/on_surface_variant"
+        android:textSize="13sp" />
+
     <LinearLayout
         android:id="@+id/panelHeightRow"
         android:layout_width="match_parent"

@@ -44,7 +44,10 @@ object Glasses {
         (activity.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager).displays
             .filter {
                 it.displayId != Display.DEFAULT_DISPLAY &&
-                        (it.flags and Display.FLAG_PRESENTATION) != 0
+                        (it.flags and Display.FLAG_PRESENTATION) != 0 &&
+                        // a stale entry still lists itself but rejects windows with
+                        // InvalidDisplayException once shown
+                        it.isValid
             }
 
     /**
@@ -100,6 +103,10 @@ class GlassesOut(
 ) {
 
     private val presentation = Presentation(activity, glassesDisplay)
+
+    /** True when the display refused the presentation — the caller should stay on the phone. */
+    var failed = false
+        private set
 
     /**
      * Label for the display in use, shown on the remote so a wrong auto-pick is
@@ -170,23 +177,38 @@ class GlassesOut(
             }
         }
         presentation.setContentView(wrap)
-        presentation.show()
-        wrap.post {
-            cx = wrap.width / 2f
-            cy = wrap.height / 2f
-            place()
+        // Showing can fail even for a display the system just listed — it may have
+        // gone away in between, or be one the app is not allowed to draw on. Report
+        // it instead of crashing so the caller can keep the content on the phone.
+        try {
+            presentation.show()
+        } catch (e: Exception) {
+            android.util.Log.w("NeoXR", "presentation refused by display: $e")
+            failed = true
+            // hand the wrap back unattached and cursor-free, so the caller can put
+            // it on the phone exactly as if no glasses had been found
+            wrap.removeView(cursor)
+            (wrap.parent as? android.view.ViewGroup)?.removeView(wrap)
         }
-        // system dismisses the presentation when the display goes away — fall back
-        presentation.setOnDismissListener { if (!activity.isDestroyed) activity.recreate() }
-        // tie our window to the activity's: dismiss when it is torn down
-        activity.window.decorView.addOnAttachStateChangeListener(
-            object : View.OnAttachStateChangeListener {
-                override fun onViewAttachedToWindow(v: View) {}
-                override fun onViewDetachedFromWindow(v: View) {
-                    presentation.setOnDismissListener(null)
-                    presentation.dismiss()
-                }
-            })
+
+        if (!failed) {
+            wrap.post {
+                cx = wrap.width / 2f
+                cy = wrap.height / 2f
+                place()
+            }
+            // system dismisses the presentation when the display goes away — fall back
+            presentation.setOnDismissListener { if (!activity.isDestroyed) activity.recreate() }
+            // tie our window to the activity's: dismiss when it is torn down
+            activity.window.decorView.addOnAttachStateChangeListener(
+                object : View.OnAttachStateChangeListener {
+                    override fun onViewAttachedToWindow(v: View) {}
+                    override fun onViewDetachedFromWindow(v: View) {
+                        presentation.setOnDismissListener(null)
+                        presentation.dismiss()
+                    }
+                })
+        }
     }
 
     private fun place() {

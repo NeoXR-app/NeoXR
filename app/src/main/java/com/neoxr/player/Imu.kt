@@ -174,6 +174,8 @@ class HeadTracker(private val context: Context, private val onStatus: (String) -
     private val fusion = Madgwick()
     private val bias = FloatArray(3)
 
+    private val isAir = AirImu.findDevice(context) != null
+
     private val pitchMount: Float =
         if ((context.getSystemService(Context.USB_SERVICE) as UsbManager).deviceList.values
                 .any { it.vendorId == 0x3318 && it.productId in PITCH_OFF_PIDS }
@@ -188,6 +190,21 @@ class HeadTracker(private val context: Context, private val onStatus: (String) -
         active?.takeIf { it !== this }?.stop()
         active = this
         running = true
+
+        // Air-series glasses carry the sensor on USB HID instead of the One series'
+        // TCP service — different transport, same fusion (see AirImu.kt).
+        AirImu.findDevice(context)?.let { dev ->
+            status("Head: connecting to glasses…")
+            AirImu.requestAccess(context, dev,
+                onReady = { granted -> streamAir(granted) },
+                onFail = { msg ->
+                    status(msg)
+                    running = false
+                    onStopped?.let { cb -> android.os.Handler(context.mainLooper).post(cb) }
+                })
+            return
+        }
+
         status("Head: connecting to glasses…")
 
         // the NCM link registers as an ethernet network; grab it so the socket pins
@@ -270,6 +287,7 @@ class HeadTracker(private val context: Context, private val onStatus: (String) -
      * (a VPN), or the network is there but the sensor service refused us.
      */
     private fun diagnose(cm: ConnectivityManager): String {
+        if (isAir) return "Head: the glasses did not answer over USB.\nUnplug and replug them, then try again."
         val addresses = ncmAddresses()
         val vpnUp = cm.allNetworks.any {
             cm.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
@@ -316,6 +334,41 @@ class HeadTracker(private val context: Context, private val onStatus: (String) -
             .map { it.second }.distinct().toList()
     } catch (_: Exception) { emptyList() }
 
+
+    /** Reads the Air-series sensor over USB and feeds the same fusion as the TCP path. */
+    private fun streamAir(device: android.hardware.usb.UsbDevice) = thread(name = "xreal-air-imu") {
+        val startNs = System.nanoTime()
+        var lastNs = 0L
+        var lastEmitNs = 0L
+        val err = AirImu.stream(context, device, stopped = { !running }) { s ->
+            val now = System.nanoTime()
+            val dt = if (lastNs == 0L) 0.001f else ((now - lastNs) / 1e9f).coerceIn(0f, 0.02f)
+            lastNs = now
+
+            if (abs(s.gx) < 0.035f && abs(s.gy) < 0.035f && abs(s.gz) < 0.035f) {
+                bias[0] += (s.gx - bias[0]) * 0.02f
+                bias[1] += (s.gy - bias[1]) * 0.02f
+                bias[2] += (s.gz - bias[2]) * 0.02f
+            }
+            // Axis remap is the empirical knob here, exactly as on the One series;
+            // this ordering matches the reference driver's device frame.
+            fusion.update(
+                -(s.gx - bias[0]), -(s.gz - bias[2]), -(s.gy - bias[1]),
+                -s.ax, -s.az, -s.ay, dt
+            )
+            yawDeg = YAW_SIGN * fusion.yawDeg
+            pitchDeg = PITCH_SIGN * fusion.rollDeg
+            if (now - lastEmitNs > 16_000_000 && now - startNs > 500_000_000) {
+                lastEmitNs = now
+                onOrientation?.invoke(yawDeg, pitchDeg)
+            }
+        }
+        if (running) {
+            status(err ?: "Head: connection to glasses lost")
+            running = false
+            onStopped?.let { cb -> android.os.Handler(context.mainLooper).post(cb) }
+        }
+    }
 
     private fun readLoop(input: InputStream) {
         val buf = ByteArray(ImuFrame.SIZE * 16)

@@ -15,6 +15,7 @@ keystore.properties
 # local working notes, not part of the project
 CLAUDE.md
 next_steps.md
+docs/agents/
 .claude/
 .remember/
 

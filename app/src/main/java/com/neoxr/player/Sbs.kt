@@ -170,10 +170,13 @@ class SbsFrameLayout(context: Context) : FrameLayout(context) {
             activity.layoutInflater.inflate(layoutRes, wrap, true)
             wrap.sbs = prefs.getBoolean("menuSbs", false)
             val glasses = Glasses.find(activity)
-            if (glasses != null) {
-                val out = GlassesOut(activity, glasses, wrap)
+            val out = glasses?.let { GlassesOut(activity, it, wrap) }?.takeIf { !it.failed }
+            if (out != null) {
                 activity.setContentView(GlassesOut.controller(activity, out, controllerExtras))
             } else {
+                // no glasses, or the display refused the presentation (a stale
+                // display entry, or one the app may not draw on): keep everything
+                // on the phone rather than crashing
                 wrap.onLongPressToggle = {
                     wrap.sbs = !wrap.sbs
                     prefs.edit().putBoolean("menuSbs", wrap.sbs).apply()

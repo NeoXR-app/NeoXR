@@ -42,6 +42,20 @@ class VrRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) :
     @Volatile var heightScale = 1f
 
     /**
+     * Ambient backdrop behind a flat or wide screen: the frame itself, blown up,
+     * blurred and dimmed, so the black void around the picture picks up its colour.
+     * Costs no assets — it samples the video texture that is already bound. Domes
+     * (180/360) fill the view on their own, so it only applies below 180°.
+     */
+    @Volatile var ambient = false
+        set(value) {
+            if (field != value) {
+                field = value
+                meshDirty = true // the inset above changes the flat mesh
+            }
+        }
+
+    /**
      * Vertical FOV of the virtual camera, degrees — set via PlayerActivity.applyFov.
      * Projection stays rectilinear: it is the only mapping that keeps straight lines
      * straight, which matters on room-scale VR content (walls, furniture). A
@@ -50,8 +64,24 @@ class VrRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) :
      */
     @Volatile var fovDeg = 72f
 
+    /**
+     * Draw one full-screen view instead of the stereo pair. Only useful when the
+     * video plays on the phone itself: without glasses to merge the halves, a single
+     * view is what you actually want to look at (and what makes a readable
+     * screenshot).
+     */
+    @Volatile var monoOutput = false
+
     /** Some sites publish the SBS halves in R|L order — swap which half goes to which eye. */
     @Volatile var swapEyes = false
+
+    /**
+     * Aspect of one eye's image (frame aspect corrected for the stereo layout), or 0
+     * while unknown. The flat screen uses it to keep the picture's proportions
+     * instead of stretching it to the viewport — which also creates the surround the
+     * ambient backdrop fills.
+     */
+    @Volatile private var videoAspect = 0f
 
     @Volatile private var screenAngle = 180
     @Volatile private var stereoMode = "sbs"
@@ -65,7 +95,41 @@ class VrRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) :
         meshDirty = true
     }
 
+    /** Decoder frame size; the eye's own aspect follows from the stereo layout. */
+    fun setVideoSize(w: Int, h: Int) {
+        if (w <= 0 || h <= 0) return
+        val eyeW = if (stereoMode == "sbs") w / 2f else w.toFloat()
+        val eyeH = if (stereoMode == "tb") h / 2f else h.toFloat()
+        val a = eyeW / eyeH
+        if (Math.abs(a - videoAspect) > 0.001f) {
+            videoAspect = a
+            meshDirty = true
+        }
+    }
+
+    private companion object {
+        /**
+         * How much the picture shrinks when the glow is on. Nothing can be drawn
+         * outside the frame the phone sends to the glasses, so the room for a
+         * surround has to come from inside it.
+         */
+        const val AMBIENT_INSET = 0.86f
+    }
+
+    // half-extents of the flat mesh in NDC (1 = full viewport), needed by the
+    // backdrop to know where the picture ends
+    @Volatile private var flatHalfX = 1f
+    @Volatile private var flatHalfY = 1f
+
     private var program = 0
+    private var bgProgram = 0
+    private var bgAPos = 0
+    private var bgUSt = 0
+    private var bgUScale = 0
+    private var bgUOffset = 0
+    private var bgUDim = 0
+    private var bgUHalf = 0
+    private var bgQuad: FloatBuffer? = null
     private var aPos = 0
     private var aUV = 0
     private var uMvp = 0
@@ -92,6 +156,24 @@ class VrRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) :
         uSt = GLES20.glGetUniformLocation(program, "uSt")
         uScale = GLES20.glGetUniformLocation(program, "uUVScale")
         uOffset = GLES20.glGetUniformLocation(program, "uUVOffset")
+
+        bgProgram = buildBgProgram()
+        bgAPos = GLES20.glGetAttribLocation(bgProgram, "aPos")
+        bgUSt = GLES20.glGetUniformLocation(bgProgram, "uSt")
+        bgUScale = GLES20.glGetUniformLocation(bgProgram, "uUVScale")
+        bgUOffset = GLES20.glGetUniformLocation(bgProgram, "uUVOffset")
+        bgUDim = GLES20.glGetUniformLocation(bgProgram, "uDim")
+        bgUHalf = GLES20.glGetUniformLocation(bgProgram, "uHalf")
+        // full-viewport quad: position + UV, the UV covering the whole eye image
+        bgQuad = ByteBuffer.allocateDirect(4 * 5 * 4).order(ByteOrder.nativeOrder())
+            .asFloatBuffer().put(
+                floatArrayOf(
+                    -1f, -1f, 0f, 0f, 1f,
+                    1f, -1f, 0f, 1f, 1f,
+                    -1f, 1f, 0f, 0f, 0f,
+                    1f, 1f, 0f, 1f, 0f
+                )
+            ).apply { position(0) }
 
         val ids = IntArray(1)
         GLES20.glGenTextures(1, ids, 0)
@@ -152,19 +234,60 @@ class VrRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) :
         // the eyes' image centers and breaks stereo fusion. widthScale narrows the
         // viewport around the half's center — a plain rectangular squeeze that leaves
         // black side bands, no geometric warping.
-        val eyeW = width / 2
+        val eyeW = if (monoOutput) width else width / 2
         val vw = (eyeW * widthScale).toInt().coerceAtLeast(1)
         val vh = (height * heightScale).toInt().coerceAtLeast(1)
         GLES20.glEnable(GLES20.GL_SCISSOR_TEST)
-        for (eye in 0..1) {
+        for (eye in 0..(if (monoOutput) 0 else 1)) {
             val x0 = eye * eyeW
             // scissor pins each eye to its half; the viewport shift moves the image
             // inside it for manual convergence tuning
             GLES20.glScissor(x0, 0, eyeW, height)
+
+            // Backdrop covers the eye's WHOLE half, before the viewport is narrowed
+            // for the picture: the bands that widthScale/heightScale leave — and the
+            // surround a letterboxed screen sits in — are exactly what it must fill.
+            // Drawing it inside the narrowed viewport would light only the area the
+            // video already covers.
+            if (ambient && screenAngle < 180) {
+                GLES20.glViewport(x0, 0, eyeW, height)
+                val e0 = if (swapEyes) 1 - eye else eye
+                val bgUv = eyeUV(e0)
+                GLES20.glUseProgram(bgProgram)
+                bgQuad?.let { q ->
+                    q.position(0)
+                    GLES20.glVertexAttribPointer(bgAPos, 3, GLES20.GL_FLOAT, false, 20, q)
+                    GLES20.glEnableVertexAttribArray(bgAPos)
+                    GLES20.glUniformMatrix4fv(bgUSt, 1, false, stMatrix, 0)
+                    GLES20.glUniform2f(bgUScale, bgUv[0], bgUv[1])
+                    GLES20.glUniform2f(bgUOffset, bgUv[2], bgUv[3])
+                    // where the picture sits inside this half, in the quad's own NDC:
+                    // the narrowed viewport times the letterboxed mesh
+                    GLES20.glUniform2f(
+                        bgUHalf,
+                        (vw.toFloat() / eyeW) * flatHalfX,
+                        (vh.toFloat() / height) * flatHalfY
+                    )
+                    GLES20.glUniform1f(bgUDim, 0.55f)
+                    GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+                }
+                // restore the main program and its attribute pointers
+                GLES20.glUseProgram(program)
+                vb.position(0)
+                GLES20.glVertexAttribPointer(aPos, 3, GLES20.GL_FLOAT, false, 20, vb)
+                GLES20.glEnableVertexAttribArray(aPos)
+                vb.position(3)
+                GLES20.glVertexAttribPointer(aUV, 2, GLES20.GL_FLOAT, false, 20, vb)
+                GLES20.glEnableVertexAttribArray(aUV)
+            }
+
+            // now the picture's own viewport, narrowed by the manual squeezes and
+            // shifted for convergence
             GLES20.glViewport(
                 x0 + (eyeW - vw) / 2 + if (eye == 0) eyeShiftPx else -eyeShiftPx,
                 (height - vh) / 2, vw, vh
             )
+
             if (screenAngle == 0) {
                 Matrix.setIdentityM(mvp, 0) // flat: screen-locked, no look-around
             } else {
@@ -200,18 +323,33 @@ class VrRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) :
 
     private fun buildMesh() {
         if (screenAngle == 0) {
-            // fullscreen NDC quad for the screen-locked flat mode (see onDrawFrame)
+            // Screen-locked flat quad in NDC. Sized to the frame's own aspect against
+            // the 16:9 eye panel, so a 4:3 or scope picture keeps its proportions
+            // instead of being stretched to fill; the leftover bands are what the
+            // ambient backdrop lights up. Falls back to fullscreen until the decoder
+            // reports a size.
+            var sx = 1f
+            var sy = 1f
+            if (videoAspect > 0f) {
+                val panel = 16f / 9f
+                if (videoAspect > panel) sy = panel / videoAspect else sx = videoAspect / panel
+            }
+            if (ambient) { sx *= AMBIENT_INSET; sy *= AMBIENT_INSET }
+            flatHalfX = sx
+            flatHalfY = sy
             putMesh(
                 floatArrayOf(
-                    -1f, -1f, 0f, 0f, 0f,
-                    1f, -1f, 0f, 1f, 0f,
-                    -1f, 1f, 0f, 0f, 1f,
-                    1f, 1f, 0f, 1f, 1f
+                    -sx, -sy, 0f, 0f, 0f,
+                    sx, -sy, 0f, 1f, 0f,
+                    -sx, sy, 0f, 0f, 1f,
+                    sx, sy, 0f, 1f, 1f
                 ),
                 shortArrayOf(0, 1, 2, 2, 1, 3)
             )
             return
         }
+        flatHalfX = 1f
+        flatHalfY = 1f
         val rows = 48
         val cols = 96
         // Equirect sphere wedge of screenAngle degrees, full latitude; 360 is the
@@ -259,6 +397,112 @@ class VrRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) :
         indexBuf = ByteBuffer.allocateDirect(idx.size * 2).order(ByteOrder.nativeOrder())
             .asShortBuffer().put(idx).apply { position(0) }
         indexCount = idx.size
+    }
+
+    /**
+     * Backdrop pass: a full-viewport quad showing an over-scaled, box-blurred and
+     * dimmed copy of the frame. Nine taps is enough to lose all detail at this scale
+     * while staying cheap; the alternative (render to a small FBO and upscale) buys
+     * little on one quad.
+     */
+    private fun buildBgProgram(): Int {
+        val vs = """
+            attribute vec3 aPos;
+            varying vec2 vNdc;
+            void main() {
+                gl_Position = vec4(aPos, 1.0);
+                vNdc = aPos.xy;
+            }
+        """
+        // Bias lighting, as on a TV with an LED strip: the border is split into a
+        // FIXED number of zones, each averaging a piece of the picture's edge, and
+        // the glow interpolates between neighbouring zones — then fades into that
+        // edge's overall average as it travels outward.
+        //
+        // Two traps, both hit on the way here:
+        //  - taps that slide with the pixel stay individually visible and fan out of
+        //    the corners as streaks. Quantising into zones removes that.
+        //  - varying the ZONE COUNT with distance makes floor() jump as you move
+        //    outward, drawing bands parallel to the edge. The count must be constant;
+        //    dissolution comes from blending towards the average instead.
+        val fs = """
+            #extension GL_OES_EGL_image_external : require
+            precision mediump float;
+            uniform samplerExternalOES uTex;
+            uniform mat4 uSt;
+            uniform vec2 uUVScale;
+            uniform vec2 uUVOffset;
+            uniform vec2 uHalf;
+            uniform float uDim;
+            varying vec2 vNdc;
+
+            const float ZONES = 12.0;
+
+            vec3 tap(vec2 ndc) {
+                vec2 t = (clamp(ndc, -uHalf, uHalf) / uHalf) * 0.5 + 0.5;
+                vec2 uv = t * uUVScale + uUVOffset;
+                return texture2D(uTex, (uSt * vec4(uv, 0.0, 1.0)).xy).rgb;
+            }
+
+            // p is 0..1 along the edge; averages a couple of points inside that zone
+            vec3 zoneAt(vec2 fixedPart, vec2 along, float alongHalf, float p) {
+                float w = 0.35 / ZONES;
+                vec3 c = tap(fixedPart + along * ((p - w) * 2.0 - 1.0) * alongHalf);
+                c += tap(fixedPart + along * ((p + w) * 2.0 - 1.0) * alongHalf);
+                return c * 0.5;
+            }
+
+            // colour this edge contributes: zone-interpolated near it, averaged far out
+            vec3 edgeGlow(vec2 fixedPart, vec2 along, float alongHalf,
+                          float alongCoord, float t) {
+                float p = clamp(alongCoord / alongHalf * 0.5 + 0.5, 0.0, 1.0);
+                float zf = p * ZONES - 0.5;
+                float i0 = floor(zf);
+                vec3 near = mix(
+                    zoneAt(fixedPart, along, alongHalf, (i0 + 0.5) / ZONES),
+                    zoneAt(fixedPart, along, alongHalf, (i0 + 1.5) / ZONES),
+                    smoothstep(0.0, 1.0, zf - i0)
+                );
+                vec3 far = (
+                    zoneAt(fixedPart, along, alongHalf, 0.15) +
+                    zoneAt(fixedPart, along, alongHalf, 0.5) +
+                    zoneAt(fixedPart, along, alongHalf, 0.85)
+                ) / 3.0;
+                return mix(near, far, smoothstep(0.0, 1.0, t));
+            }
+
+            void main() {
+                vec2 over = max(abs(vNdc) - uHalf, vec2(0.0));
+                vec2 room = max(vec2(1.0) - uHalf, vec2(0.001));
+                vec2 tv = over / room;
+                float t = clamp(max(tv.x, tv.y), 0.0, 1.0);
+
+                vec2 inset = uHalf * 0.995; // just inside the border
+
+                vec3 h = edgeGlow(
+                    vec2(0.0, sign(vNdc.y) * inset.y), vec2(1.0, 0.0),
+                    uHalf.x, clamp(vNdc.x, -uHalf.x, uHalf.x), t
+                );
+                vec3 v = edgeGlow(
+                    vec2(sign(vNdc.x) * inset.x, 0.0), vec2(0.0, 1.0),
+                    uHalf.y, clamp(vNdc.y, -uHalf.y, uHalf.y), t
+                );
+
+                // corners: both edges in proportion to how far out each axis is
+                float wx = tv.x / max(tv.x + tv.y, 0.0001);
+                vec3 c = mix(h, v, wx);
+
+                gl_FragColor = vec4(c * uDim * (1.0 - t), 1.0);
+            }
+        """
+        val p = GLES20.glCreateProgram()
+        GLES20.glAttachShader(p, compile(GLES20.GL_VERTEX_SHADER, vs))
+        GLES20.glAttachShader(p, compile(GLES20.GL_FRAGMENT_SHADER, fs))
+        GLES20.glLinkProgram(p)
+        val ok = IntArray(1)
+        GLES20.glGetProgramiv(p, GLES20.GL_LINK_STATUS, ok, 0)
+        check(ok[0] != 0) { "link failed: " + GLES20.glGetProgramInfoLog(p) }
+        return p
     }
 
     private fun buildProgram(): Int {
