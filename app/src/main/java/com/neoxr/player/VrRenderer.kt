@@ -47,13 +47,13 @@ class VrRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) :
      * Costs no assets — it samples the video texture that is already bound. Domes
      * (180/360) fill the view on their own, so it only applies below 180°.
      */
-    @Volatile var ambient = false
+    @Volatile var ambientLevel = 0f
         set(value) {
-            if (field != value) {
-                field = value
-                meshDirty = true // the inset above changes the flat mesh
-            }
+            if ((field > 0f) != (value > 0f)) meshDirty = true // the inset changes the flat mesh
+            field = value
         }
+
+    private val ambient get() = ambientLevel > 0f
 
     /**
      * Vertical FOV of the virtual camera, degrees — set via PlayerActivity.applyFov.
@@ -95,12 +95,18 @@ class VrRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) :
         meshDirty = true
     }
 
-    /** Decoder frame size; the eye's own aspect follows from the stereo layout. */
+    /**
+     * Decoder frame size, used to keep a flat screen's proportions.
+     *
+     * Only meaningful for mono content. Stereo material is anamorphic by convention:
+     * a 1920x1080 SBS file holds two 960x1080 halves that are MEANT to be stretched
+     * back to full width, so its half's pixel aspect says nothing about how it should
+     * be displayed. Letterboxing by that number squashed 3D video into a small square
+     * (SBS) or a flattened strip (OU).
+     */
     fun setVideoSize(w: Int, h: Int) {
         if (w <= 0 || h <= 0) return
-        val eyeW = if (stereoMode == "sbs") w / 2f else w.toFloat()
-        val eyeH = if (stereoMode == "tb") h / 2f else h.toFloat()
-        val a = eyeW / eyeH
+        val a = if (stereoMode == "off") w.toFloat() / h else 0f
         if (Math.abs(a - videoAspect) > 0.001f) {
             videoAspect = a
             meshDirty = true
@@ -268,7 +274,7 @@ class VrRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) :
                         (vw.toFloat() / eyeW) * flatHalfX,
                         (vh.toFloat() / height) * flatHalfY
                     )
-                    GLES20.glUniform1f(bgUDim, 0.55f)
+                    GLES20.glUniform1f(bgUDim, ambientLevel)
                     GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
                 }
                 // restore the main program and its attribute pointers

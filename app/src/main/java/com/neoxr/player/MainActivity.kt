@@ -29,8 +29,14 @@ class MainActivity : AppCompatActivity() {
             NEOXR — QUICK GUIDE
 
             SITES
-            Tap a site to open its videos. Sites without a video feed open in the built-in browser: find a video there and press "▶ VR". Add any site by its URL. ✕ removes a site.
-            "Open File" lists the videos on this device; NeoXR also appears in "Open with" and "Share" for video files.
+            Tap a site to open its videos: a list with previews, and a "Browse" panel for search, sorting and filters over it. Add any site by its URL. ✕ removes a site.
+            "Open File" lists the videos on this device, grouped by folder; NeoXR also appears in "Open with" and "Share" for video files.
+
+            BROWSER
+            Sites without a video feed open in the built-in browser: play a video there and press "▶ VR" to watch it in the player. ← → navigate; "View" reloads the page as a phone, a Quest 3 or a desktop; the % button sets page scale; "Pad" turns the right third of the screen into a touchpad with a pointer, for use through the glasses.
+
+            NETWORK SHARES (NAS)
+            Add a share the same way as a site: smb://user:password@192.168.1.10 — or smb://192.168.1.10 for a guest share. Tap it to browse the server's folders and play straight from it, with no download. The password is stored as typed, in this app's own storage.
 
             GLASSES (USB-C)
             Plug in XREAL glasses — everything shows in the glasses, and the phone becomes the controller: drag — move the pointer, tap — click, two fingers — scroll.
@@ -39,12 +45,23 @@ class MainActivity : AppCompatActivity() {
 
             PLAYER
             Tap — show / hide the controls. Swipe — look around. Long press — center the view. Double tap — phone gyro on / off.
-            ◄◄ and ►► skip 15 s back and 30 s forward; hold them for 1 min back and 5 min forward.
-            Left buttons — screen shape: Flat / Wide / 180° / 360°.
-            Right buttons — layout: 2D / SBS / OU (top-bottom), W − / + — width, Z − / + — zoom.
-            "3D" in the bottom bar — depth − / +, eye swap ⇄, and H − / + for vertical squeeze.
-            "CC" appears when a video has several audio tracks or subtitles.
-            "Screen" appears when the phone has more than one display to render on.
+            ◄◄ and ►► skip 10 s back and 15 s forward; hold them for 1 min back and 5 min forward.
+            A video reopens where you left it.
+            The bottom bar also has "…" for stream quality, when the video offers more than one.
+
+            PICTURE
+            Left buttons — screen shape: Flat / Wide / 180° / 360°. Right buttons — 3D layout: 2D / SBS (side by side) / OU (over-under). Both are detected from the video, and stay on whatever you press.
+            Z − / + — zoom. W − / + — width. "3D" in the bottom bar opens the rest: depth − / + and eye swap ⇄ for material with the halves reversed, plus H − / + for height.
+            Use W and H when a video is encoded with the wrong scale; over 100 they fill the panel and crop.
+            "Ambient glow" in that panel lights the black surround with the colours of the picture's edges, in three strengths — for flat and wide screens.
+            "Output" appears when you watch on the phone without glasses: it switches the split pair to a single view.
+
+            SUBTITLES AND AUDIO
+            "CC" appears when a video carries several audio tracks or subtitles. Tracks the device cannot decode are marked; picking one that fails no longer stops the video, it keeps playing without sound.
+            The same menu sets subtitle size, height, weight and colour, and has "Subtitle source" for tracks that are already a 3D pair — switch it when you see four copies instead of two.
+
+            SCREENS
+            "Screen" appears when the phone has more than one display to render on — press it to move the video to the next one.
 
             HEAD TRACKING
             The view follows your head, using the sensor inside the glasses. Works on XREAL One and Air series; on other glasses use the phone gyro instead (double tap).
@@ -97,6 +114,35 @@ class MainActivity : AppCompatActivity() {
     private var localVideos = listOf<LocalVideo>()
     private var openFolder: String? = null // null = folder list, otherwise its videos
 
+    // Network share being browsed in the same overlay; null = the overlay is showing
+    // local videos instead.
+    private var smbUrl: String? = null
+    private var smbEntries = listOf<Smb.Entry>()
+
+    /**
+     * Opens a share in the file overlay. Listing is a network call, so it runs off
+     * the main thread and the overlay shows up right away with a working title.
+     */
+    private fun openSmb(url: String) {
+        val wrap = wrapView ?: return
+        smbUrl = url
+        smbEntries = emptyList()
+        wrap.findViewById<TextView>(R.id.fileTitle).text = "◂  " + Smb.display(url).uppercase()
+        wrap.findViewById<TextView>(R.id.fileEmpty).text = "Connecting…"
+        renderFileList()
+        wrap.findViewById<View>(R.id.fileOverlay).visibility = View.VISIBLE
+        Thread {
+            val listed = runCatching { Smb.list(url) }
+            runOnUiThread {
+                if (smbUrl != url) return@runOnUiThread // navigated away while loading
+                smbEntries = listed.getOrDefault(emptyList())
+                wrap.findViewById<TextView>(R.id.fileEmpty).text =
+                    listed.exceptionOrNull()?.let { Smb.explain(it) } ?: "Nothing here"
+                renderFileList()
+            }
+        }.start()
+    }
+
     private fun showLocalVideos() {
         val wrap = wrapView ?: return
         val found = mutableListOf<LocalVideo>()
@@ -132,6 +178,7 @@ class MainActivity : AppCompatActivity() {
         }
         localVideos = found
         openFolder = null
+        smbUrl = null
         renderFileList()
         wrap.findViewById<View>(R.id.fileOverlay).visibility = View.VISIBLE
     }
@@ -147,9 +194,24 @@ class MainActivity : AppCompatActivity() {
         val list = wrap.findViewById<ListView>(R.id.fileList)
         val pad = (12 * resources.displayMetrics.density).toInt()
 
+        val share = smbUrl
         val folder = openFolder
         // rows: label to action
-        val rows: List<Pair<String, () -> Unit>> = if (folder == null) {
+        val rows: List<Pair<String, () -> Unit>> = if (share != null) {
+            title.text = "◂  " + Smb.display(share).uppercase()
+            listOfNotNull(Smb.parent(share)?.let { up -> "◂  Up" to { openSmb(up) } }) +
+                    smbEntries.map { e ->
+                        val label = if (e.isDir) "▸  ${e.name}"
+                        else "${e.name}   ·   ${e.size / 1_048_576} MB"
+                        label to {
+                            if (e.isDir) openSmb(Smb.child(share, e.name))
+                            else startActivity(
+                                Intent(this, PlayerActivity::class.java)
+                                    .putExtra("stream", Smb.child(share, e.name))
+                            )
+                        }
+                    }
+        } else if (folder == null) {
             title.text = "LOCAL VIDEOS"
             localVideos.groupBy { it.folder }.entries
                 .sortedBy { it.key.lowercase() }
@@ -172,7 +234,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         wrap.findViewById<View>(R.id.fileEmpty).visibility =
-            if (localVideos.isEmpty()) View.VISIBLE else View.GONE
+            if (rows.isEmpty() || (smbUrl != null && smbEntries.isEmpty())) View.VISIBLE
+            else View.GONE
         list.adapter = object : BaseAdapter() {
             override fun getCount() = rows.size
             override fun getItem(pos: Int) = rows[pos]
@@ -254,9 +317,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         list.setOnItemClickListener { _, _, pos, _ ->
-            startActivity(
-                Intent(this, VideoListActivity::class.java).putExtra("url", sites[pos])
-            )
+            val url = sites[pos]
+            if (Smb.isSmb(url)) openSmb(url)
+            else startActivity(Intent(this, VideoListActivity::class.java).putExtra("url", url))
         }
     }
 
@@ -291,11 +354,19 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun host(url: String) = try {
-        URL(url).host.removePrefix("www.")
-    } catch (e: Exception) {
-        url
-    }
+    // The credentials of a share stay in storage but never on screen: a site row is
+    // also drawn on the glasses, and a password does not belong in a list anyone can
+    // look at over your shoulder.
+    private fun host(url: String) =
+        if (Smb.isSmb(url)) Smb.display(url).substringBefore('/')
+        else try {
+            URL(url).host.removePrefix("www.")
+        } catch (e: Exception) {
+            url
+        }
+
+    private fun shown(url: String) =
+        if (Smb.isSmb(url)) Smb.SCHEME + Smb.display(url) else url
 
     private fun load() {
         val arr = JSONArray(prefs.getString("sites", "[]"))
@@ -318,7 +389,7 @@ class MainActivity : AppCompatActivity() {
             view.findViewById<TextView>(R.id.siteAvatar).text =
                 h.firstOrNull()?.uppercase() ?: "?"
             view.findViewById<TextView>(R.id.siteHost).text = h
-            view.findViewById<TextView>(R.id.siteUrl).text = url
+            view.findViewById<TextView>(R.id.siteUrl).text = shown(url)
             view.findViewById<TextView>(R.id.siteRemove).setOnClickListener {
                 confirmRemove(url)
             }

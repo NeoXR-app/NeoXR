@@ -72,6 +72,12 @@ object Deo {
     fun normalizeSiteUrl(input: String): String {
         var u = input.trim()
         require(u.isNotEmpty()) { "empty url" }
+        // network shares keep their scheme: java.net.URL has no handler for smb://
+        // and would reject a perfectly good address
+        if (u.startsWith("smb://", ignoreCase = true)) {
+            require(u.length > 6) { "empty host" }
+            return u
+        }
         if (!u.contains("://")) u = "https://$u"
         URL(u) // validate
         return u

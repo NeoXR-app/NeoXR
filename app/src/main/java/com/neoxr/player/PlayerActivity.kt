@@ -87,6 +87,9 @@ class PlayerActivity : Activity(), SensorEventListener {
     // each eye). Duplicating those per eye — right for ordinary tracks — shows four
     // copies, so the duplication has to be switchable.
     private var subStereoSource = false
+    private var subBold = false
+    /** Distance of the subtitle baseline from the bottom, percent of the view height. */
+    private var subBottomPct = 8
     private var subsWrap: SbsFrameLayout? = null
     private lateinit var btnRw: TextView
     private lateinit var btnFf: TextView
@@ -162,6 +165,8 @@ class PlayerActivity : Activity(), SensorEventListener {
             subSizeSp = p.getInt("subSize", 26)
             subColor = p.getInt("subColor", 0xFFFFFFFF.toInt())
             subStereoSource = p.getBoolean("subStereo", false)
+            subBold = p.getBoolean("subBold", false)
+            subBottomPct = p.getInt("subBottom", 8)
         }
         // diagnostic pass: dump every display the system exposes
         for (d in (getSystemService(DISPLAY_SERVICE) as DisplayManager).displays) {
@@ -366,19 +371,21 @@ class PlayerActivity : Activity(), SensorEventListener {
             }
         }
         sbsOverlay.findViewById<TextView>(R.id.btnAmbient).apply {
+            var step = getSharedPreferences("neoxr", MODE_PRIVATE).getInt("glow", 0)
+                .coerceIn(0, AMBIENT_STEPS.lastIndex)
             fun paint() {
-                text = "Ambient glow: " + if (renderer.ambient) "on" else "off"
+                text = "Ambient glow: " + AMBIENT_NAMES[step]
                 setTextColor(getColor(
-                    if (renderer.ambient) R.color.primary else R.color.on_surface_variant
+                    if (step > 0) R.color.primary else R.color.on_surface_variant
                 ))
             }
-            renderer.ambient = getSharedPreferences("neoxr", MODE_PRIVATE)
-                .getBoolean("ambient", false)
+            renderer.ambientLevel = AMBIENT_STEPS[step]
             paint()
             setOnClickListener {
-                renderer.ambient = !renderer.ambient
+                step = (step + 1) % AMBIENT_STEPS.size
+                renderer.ambientLevel = AMBIENT_STEPS[step]
                 getSharedPreferences("neoxr", MODE_PRIVATE)
-                    .edit().putBoolean("ambient", renderer.ambient).apply()
+                    .edit().putInt("glow", step).apply()
                 paint()
                 showControls()
             }
@@ -579,6 +586,14 @@ class PlayerActivity : Activity(), SensorEventListener {
         if (player != null) return
         videoSurface = Surface(st)
         player = ExoPlayer.Builder(this)
+            // network shares are read by our own SMB source; everything else goes
+            // through media3's default set (http, file, content, asset)
+            .setMediaSourceFactory(
+                androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
+                    if (Smb.isSmb(url)) Smb.Source.Factory()
+                    else androidx.media3.datasource.DefaultDataSource.Factory(this)
+                )
+            )
             // prefer the bundled FFmpeg decoders: most phones have no hardware
             // decoder for AC-3, E-AC-3, DTS or TrueHD, which are what film rips use
             .setRenderersFactory(
@@ -604,7 +619,13 @@ class PlayerActivity : Activity(), SensorEventListener {
             // nearest sync frame instead (streams are unaffected, segments align)
             setSeekParameters(androidx.media3.exoplayer.SeekParameters.CLOSEST_SYNC)
             setVideoSurface(videoSurface)
-            setMediaItem(MediaItem.fromUri(url), resumePos)
+            // resumePos is set on a recreate (glasses plugged in mid-video); a fresh
+            // open falls back to where this video was last left
+            val start = if (resumePos > 0L) resumePos else rememberedPosition(url)
+            if (start > 0L && resumePos == 0L) {
+                sbsOverlay.flash("Resuming at " + Deo.formatDuration((start / 1000).toInt()))
+            }
+            setMediaItem(MediaItem.fromUri(url), start)
             addListener(object : Player.Listener {
                 override fun onPlayerError(error: PlaybackException) {
                     android.util.Log.e("NeoXR", "player error: $error", error)
@@ -1037,16 +1058,20 @@ class PlayerActivity : Activity(), SensorEventListener {
             androidx.media3.ui.CaptionStyleCompat(
                 subColor, 0x00000000, 0x00000000,
                 androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE,
-                0xFF000000.toInt(), null
+                0xFF000000.toInt(),
+                if (subBold) android.graphics.Typeface.DEFAULT_BOLD else null
             )
         )
         v.setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, subSizeSp.toFloat())
+        // how high above the bottom the line sits — in a dome the picture's lower
+        // edge is nowhere near the panel's, so the default 8% is often too low
+        v.setBottomPaddingFraction(subBottomPct / 100f)
         v.setApplyEmbeddedStyles(false)
     }
 
     /** Manual vertical squeeze — for material encoded with the wrong vertical scale. */
     private fun adjustHeight(delta: Int) {
-        heightPct = (heightPct + delta).coerceIn(50, 120)
+        heightPct = (heightPct + delta).coerceIn(50, 200)
         renderer.heightScale = heightPct / 100f
         sbsOverlay.findViewById<TextView>(R.id.txtH)?.text = "H $heightPct"
         hValue?.text = "H $heightPct"
@@ -1055,7 +1080,7 @@ class PlayerActivity : Activity(), SensorEventListener {
 
     /** Manual horizontal squeeze for content the glasses show too wide. */
     private fun adjustWidth(delta: Int) {
-        widthPct = (widthPct + delta).coerceIn(50, 120)
+        widthPct = (widthPct + delta).coerceIn(50, 200)
         renderer.widthScale = widthPct / 100f
         wValue?.text = "W $widthPct"
         sbsOverlay.findViewById<TextView>(R.id.txtW)?.text = "W $widthPct"
@@ -1218,34 +1243,51 @@ class PlayerActivity : Activity(), SensorEventListener {
         }
         // subtitle size lives with the subtitle list — the only place it matters
         if (p.currentTracks.groups.any { it.type == C.TRACK_TYPE_TEXT }) {
-            header("SUBTITLE SIZE")
-            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            fun sizeBtn(label: String, delta: Int) = TextView(this).apply {
-                text = label
-                textSize = 20f
-                gravity = Gravity.CENTER
-                setPadding(padH, padV, padH, padV)
-                setTextColor(getColor(R.color.on_surface))
-                setOnClickListener {
-                    subSizeSp = (subSizeSp + delta).coerceIn(12, 60)
-                    getSharedPreferences("neoxr", MODE_PRIVATE)
-                        .edit().putInt("subSize", subSizeSp).apply()
-                    listOfNotNull(subtitleView, glassesSubs).forEach { styleSubtitles(it) }
-                    buildTrackMenu()
-                    showControls()
+            // −/value/+ stepper: writes the pref, restyles both views, redraws the menu
+            fun stepper(key: String, value: Int, step: Int, range: IntRange, set: (Int) -> Unit) {
+                val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                fun btn(label: String, delta: Int) = TextView(this).apply {
+                    text = label
+                    textSize = 20f
+                    gravity = Gravity.CENTER
+                    setPadding(padH, padV, padH, padV)
+                    setTextColor(getColor(R.color.on_surface))
+                    setOnClickListener {
+                        set((value + delta).coerceIn(range.first, range.last))
+                        getSharedPreferences("neoxr", MODE_PRIVATE).edit()
+                            .putInt(key, (value + delta).coerceIn(range.first, range.last)).apply()
+                        listOfNotNull(subtitleView, glassesSubs).forEach { styleSubtitles(it) }
+                        buildTrackMenu()
+                        showControls()
+                    }
+                    row.addView(this, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
                 }
-                row.addView(this, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                btn("−", -step)
+                row.addView(TextView(this).apply {
+                    text = "$value"
+                    textSize = 14f
+                    typeface = android.graphics.Typeface.MONOSPACE
+                    gravity = Gravity.CENTER
+                    setTextColor(getColor(R.color.on_surface_variant))
+                }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.2f))
+                btn("+", +step)
+                trackList.addView(row)
             }
-            sizeBtn("−", -2)
-            row.addView(TextView(this).apply {
-                text = "$subSizeSp"
-                textSize = 14f
-                typeface = android.graphics.Typeface.MONOSPACE
-                gravity = Gravity.CENTER
-                setTextColor(getColor(R.color.on_surface_variant))
-            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.2f))
-            sizeBtn("+", +2)
-            trackList.addView(row)
+
+            header("SUBTITLE SIZE")
+            stepper("subSize", subSizeSp, 2, 12..60) { subSizeSp = it }
+
+            header("SUBTITLE HEIGHT")
+            stepper("subBottom", subBottomPct, 2, 0..60) { subBottomPct = it }
+
+            header("SUBTITLE WEIGHT")
+            entry(if (subBold) "Bold" else "Regular", subBold) {
+                subBold = !subBold
+                getSharedPreferences("neoxr", MODE_PRIVATE)
+                    .edit().putBoolean("subBold", subBold).apply()
+                listOfNotNull(subtitleView, glassesSubs).forEach { styleSubtitles(it) }
+                buildTrackMenu()
+            }
 
             header("SUBTITLE COLOUR")
             val colours = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -1494,11 +1536,47 @@ class PlayerActivity : Activity(), SensorEventListener {
 
     override fun onPause() {
         super.onPause()
+        rememberPosition()
         handler.removeCallbacks(progressTick)
         handler.removeCallbacks(hideControls)
         (getSystemService(SENSOR_SERVICE) as SensorManager).unregisterListener(this)
         player?.pause()
         glView.onPause()
+    }
+
+    /**
+     * Where each video was left off, so reopening it continues instead of restarting.
+     * A short prefs list rather than a database: only the last few dozen matter, and
+     * a finished or barely-started video is not worth an entry.
+     */
+    private fun rememberPosition() {
+        val url = streamUrl ?: return
+        val p = player ?: return
+        val pos = p.currentPosition
+        val dur = p.duration
+        val keep = dur > 0 && pos > 15_000 && dur - pos > 15_000
+        val old = org.json.JSONArray(
+            getSharedPreferences("neoxr", MODE_PRIVATE).getString("resume", "[]")
+        )
+        val out = org.json.JSONArray()
+        if (keep) out.put(org.json.JSONObject().put("u", url).put("p", pos))
+        for (i in 0 until old.length()) {
+            val o = old.getJSONObject(i)
+            if (o.optString("u") != url && out.length() < 40) out.put(o)
+        }
+        getSharedPreferences("neoxr", MODE_PRIVATE)
+            .edit().putString("resume", out.toString()).apply()
+    }
+
+    private fun rememberedPosition(url: String): Long {
+        val list = org.json.JSONArray(
+            getSharedPreferences("neoxr", MODE_PRIVATE).getString("resume", "[]")
+        )
+        for (i in 0 until list.length()) {
+            val o = list.getJSONObject(i)
+            if (o.optString("u") == url) return o.optLong("p")
+        }
+        return 0L
     }
 
     override fun onStop() {
@@ -1511,6 +1589,12 @@ class PlayerActivity : Activity(), SensorEventListener {
             headTracker = null
             btnHead?.let { mark(it, false) }
         }
+    }
+
+    companion object {
+        /** Ambient glow dim factors; index 0 is off. Testers asked for brighter than one fixed level. */
+        private val AMBIENT_STEPS = floatArrayOf(0f, 0.45f, 0.8f, 1.2f)
+        private val AMBIENT_NAMES = arrayOf("off", "soft", "medium", "bright")
     }
 
     override fun onDestroy() {

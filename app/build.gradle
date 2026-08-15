@@ -20,8 +20,8 @@ android {
         applicationId "com.neoxr.player"
         minSdk 26
         targetSdk 34
-        versionCode 4
-        versionName "1.3"
+        versionCode 5
+        versionName "1.4"
 
         // the FFmpeg decoders ship a native lib per ABI; phones that can drive
         // glasses over USB-C DisplayPort are all arm64, so the rest is dead weight
@@ -74,6 +74,9 @@ dependencies {
     // the Jellyfin project — phones rarely ship hardware decoders for these
     implementation 'org.jellyfin.media3:media3-ffmpeg-decoder:1.5.0+1'
     implementation 'com.github.bumptech.glide:glide:4.16.0'
+    // SMB2/3 client for network shares; bcprov comes with it and carries the
+    // AES-CMAC that SMB signing needs (Android's JCE has no provider for it)
+    implementation 'eu.agno3.jcifs:jcifs-ng:2.1.10'
 
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.json:json:20240303'

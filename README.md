@@ -1,6 +1,6 @@
 # NeoXR
 
-A small VR video player for XREAL One and One Pro glasses.
+A small VR video player for XREAL glasses.
 
 Plug the glasses into your phone. The video plays **on the glasses** at their native
 resolution, and the phone becomes a remote control with a touchpad. NeoXR plays
@@ -43,15 +43,19 @@ mirroring mode:
 - **Any format, detected automatically.** Screen shape (flat, wide, 180°, 360°) and
   3D layout (2D, side-by-side, over-under) come from the video metadata, the file
   name, or the frame shape — and you can always set them by hand.
-- **Three ways to get video:** a site feed, the built-in browser, or a local file
-  (local videos are grouped by folder).
+- **Four ways to get video:** a site feed, the built-in browser, a local file
+  (local videos are grouped by folder), or a **network share** — browse an SMB
+  server and play from it, with nothing downloaded first.
+- **Picks up where you left off.** Reopening a video resumes at the position you
+  stopped at.
 - **Picture controls:** zoom, width, height, stereo depth and eye swap, per video,
   plus an optional ambient glow — bias lighting that carries the colour of the
-  picture's edges into the surround, the way a TV's LED strip does.
+  picture's edges into the surround, the way a TV's LED strip does, in three
+  strengths.
 - **Single-view output** when watching on the phone itself, instead of the stereo
   pair the glasses need.
-- **Subtitle style:** size, colour, and a switch for tracks that already ship as a
-  stereo pair.
+- **Subtitle style:** size, height, weight, colour, and a switch for tracks that
+  already ship as a stereo pair.
 - **Audio tracks and subtitles** for files that carry more than one.
 - **Plays the audio your phone can't.** Bundled FFmpeg decoders handle AC-3, E-AC-3,
   DTS and TrueHD — the formats most film rips use and most phones lack.
@@ -60,8 +64,9 @@ mirroring mode:
 
 ## Requirements
 
-- XREAL One or One Pro glasses. Other glasses that work as a USB-C display may work
-  too — [tell us](../../issues/new?template=device_report.md) if you try.
+- XREAL One or One Pro glasses — the pair NeoXR is developed on. The Air series and
+  other glasses that work as a USB-C display work too, minus what is noted below —
+  [tell us](../../issues/new?template=device_report.md) what you find.
 - An Android phone with USB-C DisplayPort output, Android 8.0 or newer.
 - For stereo video: **3D / SBS mode enabled** in the glasses menu.
 
@@ -89,6 +94,10 @@ add this repository URL and it will follow new releases.
      list with previews. If it does not, the site opens in the built-in browser.
    - **A local file** — press *Open File* and pick a video from your phone. NeoXR
      also appears in the system *Open with* and *Share* menus.
+   - **A network share** — type `smb://user:password@192.168.1.10` in the same input
+     field (or `smb://192.168.1.10` for a guest share) and press Add. Tapping it
+     browses the server: shares, then folders, then videos, played straight over the
+     network.
    - **From the browser** — play a video on any site, then press **▶ Play VR** to
      open that stream in the VR player.
 
@@ -114,14 +123,14 @@ In the player:
 
 The player has two button columns. **Screen** sets the shape: Flat, Wide, 180°,
 360°. **Layout** sets the 3D format: 2D, SBS (side-by-side), OU (over-under).
-`Z` sets the zoom, `W` and `H` squeeze the picture horizontally and vertically —
+`Z` sets the zoom, `W` and `H` scale the picture horizontally and vertically —
 useful when a video is encoded with the wrong scale. `◄◄` and `►►` skip 10 seconds
 back and 15 forward; hold them for one minute back and five forward. The `3D` button
 opens depth adjustment and an eye-swap switch (for sources with the halves
 reversed), and in landscape it also holds `W` and `H`. `CC` appears when a video
 carries several audio tracks or subtitles; unsupported tracks are marked, and a
 track the device cannot decode no longer stops playback — the video keeps running
-without sound.
+without sound. The same menu sets subtitle size, height, weight and colour.
 
 On a device with more than one display — a foldable, or a dual-screen handheld — a
 **Screen** button appears and moves the video to the next display, in case the app
@@ -132,6 +141,9 @@ guessed wrong about which one is the glasses.
 **Works on XREAL One and Air series.** Both expose their motion sensor — the One
 series over a network link, the Air series over USB — and NeoXR reads either and
 turns it into camera movement, so the video stays in place while you look around.
+The One-series path is tested daily; the Air-series one is built from the published
+protocol and is still waiting for a confirmation on real hardware
+([issue #2](../../issues/2)) — a report either way is welcome.
 On other glasses use the phone's gyroscope instead (double-tap in the player, then
 turn the phone to turn the view).
 
@@ -173,6 +185,10 @@ profile settings).
   documented thanks to community reverse-engineering. Viture and other brands keep
   their sensor behind a closed SDK with no public protocol, so they cannot be
   supported from open sources — the phone gyroscope works with any glasses.
+- **Network shares speak SMB2 and SMB3**, the dialects current NAS boxes and Windows
+  use. SMB1 is not supported, and the share's password is stored as typed in the app's
+  own storage. Shares are new in 1.4 and have been tested against few servers — if
+  yours does not open, a report with the server type is the fastest way to fix it.
 - **Samsung DeX is not supported.** In DeX the file browser opens behind the main
   window and playback does not start. Switch the phone to screen mirroring instead.
 - **A 360° video does not surround you.** The glasses show roughly a 50° field of
@@ -189,7 +205,7 @@ cd NeoXR
 # APK: app/build/outputs/apk/debug/NeoXR.apk
 ```
 
-You need JDK 17 and the Android SDK (compileSdk 34). Release builds are signed with
+You need JDK 17 and the Android SDK (compileSdk 35). Release builds are signed with
 the key described in `keystore.properties`; without that file a release build falls
 back to the debug key, so a fresh clone still builds.
 
