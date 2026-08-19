@@ -135,6 +135,9 @@ class PlayerActivity : Activity(), SensorEventListener {
     private var sensorYaw = 0f
     private var sensorPitch = 0f
     private var zeroYaw = 0f
+    /** Percent of real head/phone rotation carried into the view; 100 = one-to-one. */
+    private var headSensitivity = 100
+    private var popupIsPicture = false
     private var zeroPitch = 0f
     private var yawZeroed = false // first sensor sample zeroes YAW (and only yaw)
     // glasses-IMU head tracking (Imu.kt): when on, it feeds sensorYaw/sensorPitch
@@ -167,6 +170,7 @@ class PlayerActivity : Activity(), SensorEventListener {
             subStereoSource = p.getBoolean("subStereo", false)
             subBold = p.getBoolean("subBold", false)
             subBottomPct = p.getInt("subBottom", 8)
+            headSensitivity = p.getInt("headSens", 100)
         }
         // diagnostic pass: dump every display the system exposes
         for (d in (getSystemService(DISPLAY_SERVICE) as DisplayManager).displays) {
@@ -198,6 +202,16 @@ class PlayerActivity : Activity(), SensorEventListener {
                 surfaceTexture = st
                 maybeStart()
             }
+        }
+        // picture calibration describes the glasses, so it is restored per launch —
+        // and only here: renderer is lateinit, reading prefs into it any earlier
+        // throws before the player ever draws
+        getSharedPreferences("neoxr", MODE_PRIVATE).let { p ->
+            renderer.blackLevel = p.getInt("picBlack", 0) / 100f
+            renderer.brightness = p.getInt("picBright", 0) / 100f
+            renderer.contrast = p.getInt("picContrast", 100) / 100f
+            renderer.gamma = p.getInt("picGamma", 100) / 100f
+            renderer.ambientInset = p.getInt("glowWidth", 86) / 100f
         }
         glView = GLSurfaceView(presentation?.context ?: this).apply {
             setEGLContextClientVersion(2)
@@ -327,6 +341,15 @@ class PlayerActivity : Activity(), SensorEventListener {
                 else { qualityList.visibility = View.GONE; buildTrackMenu() }
                 showControls()
             }
+        }
+        sbsOverlay.findViewById<TextView>(R.id.btnPicture).setOnClickListener {
+            if (trackScroll.visibility == View.VISIBLE && popupIsPicture) {
+                trackScroll.visibility = View.GONE
+            } else {
+                qualityList.visibility = View.GONE
+                buildPictureMenu()
+            }
+            showControls()
         }
         btnQuality.setOnClickListener {
             trackScroll.visibility = View.GONE
@@ -1065,7 +1088,11 @@ class PlayerActivity : Activity(), SensorEventListener {
         v.setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, subSizeSp.toFloat())
         // how high above the bottom the line sits — in a dome the picture's lower
         // edge is nowhere near the panel's, so the default 8% is often too low
-        v.setBottomPaddingFraction(subBottomPct / 100f)
+        // 0 = just above the bottom edge, 100 = top of the view; negative pushes the
+        // line down into the black bar, which keeps the picture area itself clear
+        v.setBottomPaddingFraction((subBottomPct.coerceIn(0, 100)) / 100f)
+        val below = if (subBottomPct < 0) -subBottomPct / 100f else 0f
+        v.post { v.translationY = v.height * below }
         v.setApplyEmbeddedStyles(false)
     }
 
@@ -1171,7 +1198,103 @@ class PlayerActivity : Activity(), SensorEventListener {
      * live in the media itself (a file with several dubs or subtitle tracks), so the
      * button only appears when there is something to choose.
      */
+    /**
+     * Picture calibration and the two comfort knobs that belong with it. Separate
+     * from the geometry buttons on purpose: these describe the GLASSES, not the
+     * video, so unlike zoom and width they persist across files.
+     */
+    private fun buildPictureMenu() {
+        popupIsPicture = true
+        trackList.removeAllViews()
+        val padH = (16 * resources.displayMetrics.density).toInt()
+        val padV = (8 * resources.displayMetrics.density).toInt()
+
+        fun header(text: String) {
+            trackList.addView(TextView(this).apply {
+                this.text = text
+                textSize = 9f
+                typeface = android.graphics.Typeface.MONOSPACE
+                letterSpacing = 0.18f
+                setPadding(padH, padV, padH, 2)
+                setTextColor(getColor(R.color.on_surface_variant))
+            })
+        }
+
+        // −/value/+ row: writes the pref, applies it live, redraws the menu
+        fun row(key: String, value: Int, step: Int, range: IntRange, apply: (Int) -> Unit) {
+            val line = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            fun btn(label: String, delta: Int) = TextView(this).apply {
+                text = label
+                textSize = 20f
+                gravity = Gravity.CENTER
+                setPadding(padH, padV, padH, padV)
+                setTextColor(getColor(R.color.on_surface))
+                setOnClickListener {
+                    val next = (value + delta).coerceIn(range.first, range.last)
+                    apply(next)
+                    getSharedPreferences("neoxr", MODE_PRIVATE).edit().putInt(key, next).apply()
+                    buildPictureMenu()
+                    showControls()
+                }
+                line.addView(this, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            }
+            btn("−", -step)
+            line.addView(TextView(this).apply {
+                text = "$value"
+                textSize = 14f
+                typeface = android.graphics.Typeface.MONOSPACE
+                gravity = Gravity.CENTER
+                setTextColor(getColor(R.color.on_surface_variant))
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.2f))
+            btn("+", +step)
+            trackList.addView(line)
+        }
+
+        header("BLACK LEVEL")
+        row("picBlack", (renderer.blackLevel * 100).toInt(), 2, -10..30) {
+            renderer.blackLevel = it / 100f
+        }
+        header("BRIGHTNESS")
+        row("picBright", (renderer.brightness * 100).toInt(), 2, -30..30) {
+            renderer.brightness = it / 100f
+        }
+        header("CONTRAST")
+        row("picContrast", (renderer.contrast * 100).toInt(), 5, 70..160) {
+            renderer.contrast = it / 100f
+        }
+        header("GAMMA   (below 100 opens shadows)")
+        row("picGamma", (renderer.gamma * 100).toInt(), 5, 60..160) {
+            renderer.gamma = it / 100f
+        }
+        header("GLOW WIDTH")
+        row("glowWidth", (renderer.ambientInset * 100).toInt(), 2, 70..96) {
+            renderer.ambientInset = it / 100f
+        }
+        header("HEAD / GYRO SENSITIVITY")
+        row("headSens", headSensitivity, 5, 25..150) { headSensitivity = it }
+
+        trackList.addView(TextView(this).apply {
+            text = "Reset picture"
+            textSize = 14f
+            setPadding(padH, padV, padH, padV)
+            setTextColor(getColor(R.color.primary))
+            setOnClickListener {
+                renderer.blackLevel = 0f
+                renderer.brightness = 0f
+                renderer.contrast = 1f
+                renderer.gamma = 1f
+                getSharedPreferences("neoxr", MODE_PRIVATE).edit()
+                    .putInt("picBlack", 0).putInt("picBright", 0)
+                    .putInt("picContrast", 100).putInt("picGamma", 100).apply()
+                buildPictureMenu()
+                showControls()
+            }
+        })
+        showPopup(trackScroll)
+    }
+
     private fun buildTrackMenu() {
+        popupIsPicture = false
         val p = player ?: return
         trackList.removeAllViews()
         val padH = (16 * resources.displayMetrics.density).toInt()
@@ -1278,7 +1401,7 @@ class PlayerActivity : Activity(), SensorEventListener {
             stepper("subSize", subSizeSp, 2, 12..60) { subSizeSp = it }
 
             header("SUBTITLE HEIGHT")
-            stepper("subBottom", subBottomPct, 2, 0..60) { subBottomPct = it }
+            stepper("subBottom", subBottomPct, 2, -20..100) { subBottomPct = it }
 
             header("SUBTITLE WEIGHT")
             entry(if (subBold) "Bold" else "Regular", subBold) {
@@ -1399,9 +1522,15 @@ class PlayerActivity : Activity(), SensorEventListener {
     }
 
     private fun applyView() {
-        renderer.yawDeg = dragYaw + if (gyroEnabled) wrap(sensorYaw - zeroYaw) else 0f
+        // Sensitivity scales the angle the head (or the phone) has actually turned.
+        // 100% is one-to-one with the real world, which is correct but feels fast to
+        // some people: the glasses show ~50 degrees of view, so a real 50-degree turn
+        // sweeps the whole panel. Below 100 the scene turns less than you do.
+        val g = headSensitivity / 100f
+        renderer.yawDeg = dragYaw + if (gyroEnabled) wrap(sensorYaw - zeroYaw) * g else 0f
         renderer.pitchDeg =
-            (dragPitch + if (gyroEnabled) sensorPitch - zeroPitch else 0f).coerceIn(-89f, 89f)
+            (dragPitch + if (gyroEnabled) (sensorPitch - zeroPitch) * g else 0f)
+                .coerceIn(-89f, 89f)
         levelView?.postInvalidateOnAnimation()
     }
 

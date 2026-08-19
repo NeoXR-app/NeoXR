@@ -53,12 +53,13 @@ class MainActivity : AppCompatActivity() {
             Left buttons — screen shape: Flat / Wide / 180° / 360°. Right buttons — 3D layout: 2D / SBS (side by side) / OU (over-under). Both are detected from the video, and stay on whatever you press.
             Z − / + — zoom. W − / + — width. "3D" in the bottom bar opens the rest: depth − / + and eye swap ⇄ for material with the halves reversed, plus H − / + for height.
             Use W and H when a video is encoded with the wrong scale; over 100 they fill the panel and crop.
-            "Ambient glow" in that panel lights the black surround with the colours of the picture's edges, in three strengths — for flat and wide screens.
+            "Ambient glow" in that panel lights the black surround with the colours of the picture's edges, in three strengths — for flat and wide screens. Films letterboxed inside their own frame are handled: the glow looks past the black bar for the real edge of the picture.
+            "PIC" in the bottom bar holds the picture calibration — black level, brightness, contrast and gamma (lower gamma opens up shadows on panels that crush them) — plus the glow width and the head / gyro sensitivity. These describe your glasses, so they are kept between videos.
             "Output" appears when you watch on the phone without glasses: it switches the split pair to a single view.
 
             SUBTITLES AND AUDIO
             "CC" appears when a video carries several audio tracks or subtitles. Tracks the device cannot decode are marked; picking one that fails no longer stops the video, it keeps playing without sound.
-            The same menu sets subtitle size, height, weight and colour, and has "Subtitle source" for tracks that are already a 3D pair — switch it when you see four copies instead of two.
+            The same menu sets subtitle size, height, weight and colour, and has "Subtitle source" for tracks that are already a 3D pair — switch it when you see four copies instead of two. Height runs from −20 to 100: negative puts the line below the picture, in the black bar, and 100 puts it at the top.
 
             SCREENS
             "Screen" appears when the phone has more than one display to render on — press it to move the video to the next one.
@@ -68,6 +69,7 @@ class MainActivity : AppCompatActivity() {
             1. In the glasses' own menu: Stabilizer OFF, mode Follow (not Anchor), latest firmware.
             2. Open a video and press "Head" in the left column (shown only with glasses connected). On Air series, allow the USB permission Android asks for.
             3. Look forward and long-press to center.
+            If the view turns faster than you do, lower "Head / gyro sensitivity" under "PIC"; 100 means the scene turns exactly as much as you do.
             Press "Head" again to return to the phone gyro. On One series, a VPN can block the connection — enable "allow apps to bypass VPN" in its settings if head tracking cannot reach the glasses.
         """.trimIndent()
     }

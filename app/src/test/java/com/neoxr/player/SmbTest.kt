@@ -29,7 +29,7 @@ class SmbTest {
     @Test
     fun sharesKeepTheirScheme() {
         assertEquals("smb://user:pw@10.0.0.2/vr", Deo.normalizeSiteUrl(" smb://user:pw@10.0.0.2/vr "))
-        assertEquals("https://deovr.com", Deo.normalizeSiteUrl("deovr.com"))
+        assertEquals("https://example.com", Deo.normalizeSiteUrl("example.com"))
     }
 
     @Test

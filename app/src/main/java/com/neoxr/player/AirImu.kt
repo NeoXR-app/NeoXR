@@ -225,10 +225,15 @@ object AirImu {
         if (aDiv == 0) return null
         val aMul = i16(a)
 
+        // The packet's own multiplier/divisor yields DEGREES per second, as in the
+        // reference driver; the fusion wants radians. Missing this made every head
+        // movement 57x too large — the first Air owner on real hardware called the
+        // tracking unusable, which is exactly what that looks like.
+        val toRad = (Math.PI / 180.0).toFloat()
         return Sample(
-            i24(g + 6) * gMul.toFloat() / gDiv,
-            i24(g + 9) * gMul.toFloat() / gDiv,
-            i24(g + 12) * gMul.toFloat() / gDiv,
+            i24(g + 6) * gMul.toFloat() / gDiv * toRad,
+            i24(g + 9) * gMul.toFloat() / gDiv * toRad,
+            i24(g + 12) * gMul.toFloat() / gDiv * toRad,
             i24(a + 6) * aMul.toFloat() / aDiv,
             i24(a + 9) * aMul.toFloat() / aDiv,
             i24(a + 12) * aMul.toFloat() / aDiv

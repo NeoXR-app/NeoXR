@@ -41,24 +41,37 @@ class AirImuTest {
         return b
     }
 
+    /**
+     * The packet's multiplier/divisor yield DEGREES per second; the fusion consumes
+     * radians. Getting this wrong amplified every head movement 57x, which is how it
+     * shipped in 1.3 and what the first Air owner on real hardware reported.
+     */
+    private fun rad(deg: Float) = (deg * Math.PI / 180.0).toFloat()
+
     @Test
     fun `decodes gyro and accel with packet scaling`() {
         val s = AirImu.parse(report(), 64)
         assertNotNull(s)
-        assertEquals(1.0f, s!!.gx, 1e-6f)
-        assertEquals(-2.0f, s.gy, 1e-6f)
-        assertEquals(3.0f, s.gz, 1e-6f)
+        assertEquals(rad(1.0f), s!!.gx, 1e-6f)
+        assertEquals(rad(-2.0f), s.gy, 1e-6f)
+        assertEquals(rad(3.0f), s.gz, 1e-6f)
         assertEquals(0f, s.ax, 1e-6f)
         assertEquals(1.0f, s.az, 1e-6f) // one g, before unit normalisation
+    }
+
+    @Test
+    fun `gyro leaves the parser in radians, not degrees`() {
+        val s = AirImu.parse(report(gyro = Triple(90_000, 0, 0)), 64)!! // 90 deg/s
+        assertEquals(1.5708f, s.gx, 1e-4f)
     }
 
     @Test
     fun `negative 24-bit values keep their sign`() {
         val s = AirImu.parse(report(gyro = Triple(-1, -8_388_608, 8_388_607)), 64)
         assertNotNull(s)
-        assertEquals(-0.001f, s!!.gx, 1e-6f)
-        assertEquals(-8388.608f, s.gy, 1e-2f)
-        assertEquals(8388.607f, s.gz, 1e-2f)
+        assertEquals(rad(-0.001f), s!!.gx, 1e-6f)
+        assertEquals(rad(-8388.608f), s.gy, 1e-2f)
+        assertEquals(rad(8388.607f), s.gz, 1e-2f)
     }
 
     @Test

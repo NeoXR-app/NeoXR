@@ -51,11 +51,15 @@ mirroring mode:
 - **Picture controls:** zoom, width, height, stereo depth and eye swap, per video,
   plus an optional ambient glow — bias lighting that carries the colour of the
   picture's edges into the surround, the way a TV's LED strip does, in three
-  strengths.
+  strengths and adjustable width.
+- **Calibration for your glasses:** black level, brightness, contrast and gamma.
+  Panels differ in how they render shadows, and the glasses have no picture menu of
+  their own — lower the gamma and dark scenes open up.
 - **Single-view output** when watching on the phone itself, instead of the stereo
   pair the glasses need.
 - **Subtitle style:** size, height, weight, colour, and a switch for tracks that
-  already ship as a stereo pair.
+  already ship as a stereo pair. The line can sit anywhere from inside the bottom
+  black bar to the top of the picture.
 - **Audio tracks and subtitles** for files that carry more than one.
 - **Plays the audio your phone can't.** Bundled FFmpeg decoders handle AC-3, E-AC-3,
   DTS and TrueHD — the formats most film rips use and most phones lack.
@@ -127,7 +131,10 @@ The player has two button columns. **Screen** sets the shape: Flat, Wide, 180°,
 useful when a video is encoded with the wrong scale. `◄◄` and `►►` skip 10 seconds
 back and 15 forward; hold them for one minute back and five forward. The `3D` button
 opens depth adjustment and an eye-swap switch (for sources with the halves
-reversed), and in landscape it also holds `W` and `H`. `CC` appears when a video
+reversed), and in landscape it also holds `W` and `H`. `PIC` holds the picture calibration —
+black level, brightness, contrast, gamma — plus the ambient glow width and the head
+tracking sensitivity; those settings describe your glasses, so they are kept between
+videos. `CC` appears when a video
 carries several audio tracks or subtitles; unsupported tracks are marked, and a
 track the device cannot decode no longer stops playback — the video keeps running
 without sound. The same menu sets subtitle size, height, weight and colour.
@@ -141,9 +148,9 @@ guessed wrong about which one is the glasses.
 **Works on XREAL One and Air series.** Both expose their motion sensor — the One
 series over a network link, the Air series over USB — and NeoXR reads either and
 turns it into camera movement, so the video stays in place while you look around.
-The One-series path is tested daily; the Air-series one is built from the published
-protocol and is still waiting for a confirmation on real hardware
-([issue #2](../../issues/2)) — a report either way is welcome.
+Both are now confirmed on real hardware — the Air-series path was written from the
+published protocol alone and verified by an Air 2 Pro owner in 1.5. If the view turns
+faster or slower than you do, adjust the sensitivity under `PIC`.
 On other glasses use the phone's gyroscope instead (double-tap in the player, then
 turn the phone to turn the view).
 

@@ -20,8 +20,8 @@ android {
         applicationId "com.neoxr.player"
         minSdk 26
         targetSdk 34
-        versionCode 5
-        versionName "1.4"
+        versionCode 6
+        versionName "1.5"
 
         // the FFmpeg decoders ship a native lib per ABI; phones that can drive
         // glasses over USB-C DisplayPort are all arm64, so the rest is dead weight

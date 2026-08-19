@@ -55,6 +55,12 @@ class VrRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) :
 
     private val ambient get() = ambientLevel > 0f
 
+    /** How much of the panel the glow gets: smaller value = wider band of light. */
+    @Volatile var ambientInset = AMBIENT_INSET
+        set(value) {
+            if (field != value) { field = value; meshDirty = true }
+        }
+
     /**
      * Vertical FOV of the virtual camera, degrees — set via PlayerActivity.applyFov.
      * Projection stays rectilinear: it is the only mapping that keeps straight lines
@@ -119,7 +125,7 @@ class VrRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) :
          * outside the frame the phone sends to the glasses, so the room for a
          * surround has to come from inside it.
          */
-        const val AMBIENT_INSET = 0.86f
+        const val AMBIENT_INSET = 0.86f // default; overridden by ambientInset
     }
 
     // half-extents of the flat mesh in NDC (1 = full viewport), needed by the
@@ -152,6 +158,20 @@ class VrRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) :
     private val stMatrix = FloatArray(16)
     private val proj = FloatArray(16)
     private val view = FloatArray(16)
+    private var uBlack = 0
+    private var uBright = 0
+    private var uContrast = 0
+    private var uGamma = 0
+
+    /**
+     * Picture adjustment, applied to the video texture. Defaults are the identity —
+     * a viewer who never opens the panel sees exactly what the file contains.
+     */
+    @Volatile var blackLevel = 0f   // -0.1..0.3, lifts (or crushes) the darkest level
+    @Volatile var brightness = 0f   // -0.3..0.3
+    @Volatile var contrast = 1f     // 0.7..1.6
+    @Volatile var gamma = 1f        // 0.6..1.6, below 1 opens up shadows
+
     private val mvp = FloatArray(16)
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
@@ -162,6 +182,10 @@ class VrRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) :
         uSt = GLES20.glGetUniformLocation(program, "uSt")
         uScale = GLES20.glGetUniformLocation(program, "uUVScale")
         uOffset = GLES20.glGetUniformLocation(program, "uUVOffset")
+        uBlack = GLES20.glGetUniformLocation(program, "uBlack")
+        uBright = GLES20.glGetUniformLocation(program, "uBright")
+        uContrast = GLES20.glGetUniformLocation(program, "uContrast")
+        uGamma = GLES20.glGetUniformLocation(program, "uGamma")
 
         bgProgram = buildBgProgram()
         bgAPos = GLES20.glGetAttribLocation(bgProgram, "aPos")
@@ -314,6 +338,10 @@ class VrRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) :
             val uv = eyeUV(e)
             GLES20.glUniform2f(uScale, uv[0], uv[1])
             GLES20.glUniform2f(uOffset, uv[2], uv[3])
+            GLES20.glUniform1f(uBlack, blackLevel)
+            GLES20.glUniform1f(uBright, brightness)
+            GLES20.glUniform1f(uContrast, contrast)
+            GLES20.glUniform1f(uGamma, gamma)
             GLES20.glDrawElements(GLES20.GL_TRIANGLES, indexCount, GLES20.GL_UNSIGNED_SHORT, indexBuf)
         }
         GLES20.glDisable(GLES20.GL_SCISSOR_TEST)
@@ -340,7 +368,7 @@ class VrRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) :
                 val panel = 16f / 9f
                 if (videoAspect > panel) sy = panel / videoAspect else sx = videoAspect / panel
             }
-            if (ambient) { sx *= AMBIENT_INSET; sy *= AMBIENT_INSET }
+            if (ambient) { sx *= ambientInset; sy *= ambientInset }
             flatHalfX = sx
             flatHalfY = sy
             putMesh(
@@ -444,10 +472,25 @@ class VrRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) :
 
             const float ZONES = 12.0;
 
-            vec3 tap(vec2 ndc) {
+            vec3 texAt(vec2 ndc) {
                 vec2 t = (clamp(ndc, -uHalf, uHalf) / uHalf) * 0.5 + 0.5;
                 vec2 uv = t * uUVScale + uUVOffset;
                 return texture2D(uTex, (uSt * vec4(uv, 0.0, 1.0)).xy).rgb;
+            }
+
+            // Films are often letterboxed inside the frame itself (IMAX rips change
+            // aspect between scenes), and the frame's own edge is then a black bar
+            // with nothing to light. Step inward until the picture actually starts —
+            // the same letterbox detection physical Ambilight software does. Bounded
+            // and small: this walks the border, never into the picture.
+            vec3 tap(vec2 ndc) {
+                vec2 inward = -sign(ndc) * uHalf;
+                vec3 c = texAt(ndc);
+                for (int i = 1; i <= 8; i++) {
+                    if (c.r + c.g + c.b > 0.09) break;
+                    c = texAt(ndc + inward * (float(i) * 0.018));
+                }
+                return c;
             }
 
             // p is 0..1 along the edge; averages a couple of points inside that zone
@@ -526,12 +569,25 @@ class VrRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) :
                 vUV = (uSt * vec4(uv, 0.0, 1.0)).xy;
             }
         """
+        // Picture controls. Glasses panels differ wildly in how they render shadows —
+        // OLED ones crush them, and there is no display menu to fix it — so the
+        // adjustment belongs here, on the way to the texture.
         val fs = """
             #extension GL_OES_EGL_image_external : require
             precision mediump float;
             uniform samplerExternalOES uTex;
+            uniform float uBlack;      // lift or crush the darkest level
+            uniform float uBright;
+            uniform float uContrast;
+            uniform float uGamma;
             varying vec2 vUV;
-            void main() { gl_FragColor = texture2D(uTex, vUV); }
+            void main() {
+                vec3 c = texture2D(uTex, vUV).rgb;
+                c = uBlack + c * (1.0 - uBlack);          // black level
+                c = (c - 0.5) * uContrast + 0.5 + uBright;
+                c = pow(clamp(c, 0.0, 1.0), vec3(uGamma));
+                gl_FragColor = vec4(c, 1.0);
+            }
         """
         val p = GLES20.glCreateProgram()
         GLES20.glAttachShader(p, compile(GLES20.GL_VERTEX_SHADER, vs))

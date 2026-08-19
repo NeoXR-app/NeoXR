@@ -124,6 +124,18 @@
             android:textSize="14sp"
             android:visibility="gone" />
 
+        <!-- picture calibration: panels differ in how they render shadows and there
+             is no display menu in the glasses to fix it -->
+        <TextView
+            android:id="@+id/btnPicture"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:padding="10dp"
+            android:text="PIC"
+            android:textColor="@color/primary"
+            android:textSize="14sp" />
+
         <TextView
             android:id="@+id/btnQuality"
             android:layout_width="wrap_content"
