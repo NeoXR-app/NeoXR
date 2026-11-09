@@ -72,6 +72,22 @@ object Glasses {
         return all.first()
     }
 
+    /**
+     * The mode to ask the glasses for: the fastest refresh at the resolution the link
+     * came up with — never a different size. The glasses pick that size themselves
+     * (EDID preferred timing: 1920x1080 in 2D, 3840x1080 full SBS where the host
+     * offers it), while the list can also hold UltraWide inputs (21:9 since the July
+     * 2026 One Pro firmware) that the glasses show as a wide strip, not two eyes.
+     * Picking the "densest" mode would switch the link into one of those: a switch
+     * blanks the glasses and dismisses the presentation (its display metrics change).
+     */
+    fun bestMode(display: Display): Display.Mode? {
+        val now = display.mode ?: return null
+        return display.supportedModes
+            .filter { it.physicalWidth == now.physicalWidth && it.physicalHeight == now.physicalHeight }
+            .maxByOrNull { it.refreshRate }
+    }
+
     /** Remembers a manual choice (by display name) for the next launch. */
     fun remember(activity: Activity, display: Display) {
         activity.getSharedPreferences("neoxr", Context.MODE_PRIVATE)
@@ -104,8 +120,8 @@ class GlassesOut(
 
     private val presentation = Presentation(activity, glassesDisplay)
 
-    /** True when the display refused the presentation — the caller should stay on the phone. */
-    var failed = false
+    /** Why the display refused the presentation (null = shown) — the caller stays on the phone. */
+    var failure: String? = null
         private set
 
     /**
@@ -121,14 +137,6 @@ class GlassesOut(
             return if (m != null) "GLASSES · ${m.physicalWidth}×${m.physicalHeight}"
             else "GLASSES CONNECTED"
         }
-
-    // The densest mode the glasses offer, fastest refresh among equals (the panels
-    // are natively 120 Hz). Phone/glasses links commonly top out at 1920x1080 with
-    // no 3840x1080 full-SBS mode, which hard-caps stereo at 960 columns per eye
-    // regardless of what the renderer does; 2D output stays pixel-perfect.
-    private val bestMode = glassesDisplay.supportedModes.maxWithOrNull(
-        compareBy({ it.physicalWidth.toLong() * it.physicalHeight }, { it.refreshRate })
-    )
 
     // A drawn pointer, not a font glyph: it points up-left like a desktop cursor and
     // its TIP sits exactly at the view's top-left corner, which is the click hotspot
@@ -171,11 +179,9 @@ class GlassesOut(
         // white; the app's screens assume the dark backdrop
         wrap.setBackgroundColor(activity.getColor(R.color.backdrop))
         wrap.addView(cursor)
-        bestMode?.let { m ->
-            presentation.window?.let { w ->
-                w.attributes = w.attributes.apply { preferredDisplayModeId = m.modeId }
-            }
-        }
+        // no display-mode request here: menus gain nothing from 120 Hz, and with one
+        // presentation per screen the request would come and go on every screen
+        // change, re-training the link each time (only the player asks for a mode)
         presentation.setContentView(wrap)
         // Showing can fail even for a display the system just listed — it may have
         // gone away in between, or be one the app is not allowed to draw on. Report
@@ -184,21 +190,57 @@ class GlassesOut(
             presentation.show()
         } catch (e: Exception) {
             android.util.Log.w("NeoXR", "presentation refused by display: $e")
-            failed = true
+            failure = "${e.javaClass.simpleName}: ${e.message}"
             // hand the wrap back unattached and cursor-free, so the caller can put
             // it on the phone exactly as if no glasses had been found
             wrap.removeView(cursor)
             (wrap.parent as? android.view.ViewGroup)?.removeView(wrap)
         }
 
-        if (!failed) {
+        if (failure == null) {
             wrap.post {
                 cx = wrap.width / 2f
                 cy = wrap.height / 2f
                 place()
             }
             // system dismisses the presentation when the display goes away — fall back
-            presentation.setOnDismissListener { if (!activity.isDestroyed) activity.recreate() }
+            val onDismiss = android.content.DialogInterface.OnDismissListener {
+                if (!activity.isDestroyed) activity.recreate()
+            }
+            presentation.setOnDismissListener(onDismiss)
+            // Only the screen in front owns the glasses, and it lets go in onPause:
+            // that runs BEFORE the next screen's onCreate (onStop runs after), so the
+            // next screen shows its presentation on an empty display, exactly like the
+            // first screen does. With the old screen's presentation still up, the next
+            // one was refused on the glasses and fell back to the phone.
+            activity.application.registerActivityLifecycleCallbacks(
+                object : android.app.Application.ActivityLifecycleCallbacks {
+                    override fun onActivityResumed(a: Activity) {
+                        if (a !== activity || presentation.isShowing) return
+                        presentation.setOnDismissListener(onDismiss)
+                        // the display may have gone (or come back as a new one) meanwhile
+                        try {
+                            presentation.show()
+                        } catch (e: Exception) {
+                            activity.recreate()
+                        }
+                    }
+
+                    override fun onActivityPaused(a: Activity) {
+                        if (a !== activity) return
+                        presentation.setOnDismissListener(null)
+                        presentation.dismiss()
+                    }
+
+                    override fun onActivityDestroyed(a: Activity) {
+                        if (a === activity) activity.application.unregisterActivityLifecycleCallbacks(this)
+                    }
+
+                    override fun onActivityCreated(a: Activity, b: android.os.Bundle?) {}
+                    override fun onActivityStarted(a: Activity) {}
+                    override fun onActivityStopped(a: Activity) {}
+                    override fun onActivitySaveInstanceState(a: Activity, b: android.os.Bundle) {}
+                })
             // tie our window to the activity's: dismiss when it is torn down
             activity.window.decorView.addOnAttachStateChangeListener(
                 object : View.OnAttachStateChangeListener {

@@ -195,13 +195,14 @@ class WebViewActivity : Activity() {
                 }
             }
         }
-        val glasses = Glasses.find(this)
-        if (glasses != null) {
+        // a display that refuses the presentation hands the root back: phone path
+        val out = Glasses.find(this)?.let { GlassesOut(this, it, rootView()) }
+            ?.takeIf { it.failure == null }
+        if (out != null) {
             // with glasses attached the page lives on THEM at native resolution and the
             // phone becomes a touchpad controller with a cursor. The on-page overlay
             // buttons are dead weight there — hide them and move their jobs to the
             // controller strip.
-            val out = GlassesOut(this, glasses, rootView())
             glassesOut = out
             leftBar.visibility = View.GONE
             rightBar.visibility = View.GONE

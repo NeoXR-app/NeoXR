@@ -69,7 +69,7 @@ class SbsFrameLayout(context: Context) : FrameLayout(context) {
     private var flashView: TextView? = null
     private val hideFlash = Runnable { flashView?.visibility = GONE }
 
-    fun flash(msg: String) {
+    fun flash(msg: String, ms: Long = 2500) {
         val tv = flashView ?: TextView(context).apply {
             textSize = 16f
             setTextColor(context.getColor(R.color.on_surface))
@@ -87,7 +87,7 @@ class SbsFrameLayout(context: Context) : FrameLayout(context) {
         tv.visibility = VISIBLE
         tv.bringToFront()
         tv.removeCallbacks(hideFlash)
-        tv.postDelayed(hideFlash, 2500)
+        tv.postDelayed(hideFlash, ms)
     }
 
     private val detector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
@@ -169,34 +169,62 @@ class SbsFrameLayout(context: Context) : FrameLayout(context) {
             val wrap = SbsFrameLayout(activity)
             activity.layoutInflater.inflate(layoutRes, wrap, true)
             wrap.sbs = prefs.getBoolean("menuSbs", false)
-            val glasses = Glasses.find(activity)
-            val out = glasses?.let { GlassesOut(activity, it, wrap) }?.takeIf { !it.failed }
-            if (out != null) {
-                activity.setContentView(GlassesOut.controller(activity, out, controllerExtras))
-            } else {
-                // no glasses, or the display refused the presentation (a stale
-                // display entry, or one the app may not draw on): keep everything
-                // on the phone rather than crashing
-                wrap.onLongPressToggle = {
-                    wrap.sbs = !wrap.sbs
-                    prefs.edit().putBoolean("menuSbs", wrap.sbs).apply()
-                }
-                activity.setContentView(wrap)
-                watchForGlasses(activity)
+            // phone-only gesture: on the glasses the wrap gets injected events only,
+            // which bypass the long-press detector
+            wrap.onLongPressToggle = {
+                wrap.sbs = !wrap.sbs
+                prefs.edit().putBoolean("menuSbs", wrap.sbs).apply()
+            }
+            // phone first; moves to the glasses if they take it. No glasses, or the
+            // display refused the presentation: stay on the phone rather than crash
+            activity.setContentView(wrap)
+            if (!toGlasses(activity, wrap, controllerExtras)) {
+                watchForGlasses(activity, wrap, controllerExtras)
             }
             return wrap
         }
 
-        /** Recreates the activity when glasses get plugged in, moving content to them. */
-        private fun watchForGlasses(activity: Activity) {
+        /** Moves [wrap] from the phone onto the glasses; false = it stays on the phone. */
+        private fun toGlasses(activity: Activity, wrap: SbsFrameLayout, extras: List<View>): Boolean {
+            val glasses = Glasses.find(activity) ?: return false
+            (wrap.parent as? ViewGroup)?.removeView(wrap)
+            val out = GlassesOut(activity, glasses, wrap)
+            out.failure?.let {
+                activity.setContentView(wrap)
+                // said on the phone, where the content now is: the one clue to why,
+                // held long enough to read (or photograph) the whole exception
+                wrap.flash("Glasses refused this screen — $it", 12000)
+                return false
+            }
+            activity.setContentView(GlassesOut.controller(activity, out, extras))
+            return true
+        }
+
+        /**
+         * Moves the content to the glasses when they get plugged in, or when a glasses
+         * display that refused it changes (a link that blanked and came back), in place:
+         * a recreate would refetch the feed on every display event.
+         */
+        private fun watchForGlasses(activity: Activity, wrap: SbsFrameLayout, extras: List<View>) {
             val dm = activity.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
             val listener = object : DisplayManager.DisplayListener {
-                override fun onDisplayAdded(displayId: Int) {
-                    if (Glasses.find(activity) != null && !activity.isDestroyed) activity.recreate()
+                override fun onDisplayAdded(displayId: Int) = retry()
+                override fun onDisplayRemoved(displayId: Int) {}
+                override fun onDisplayChanged(displayId: Int) {
+                    // the phone's own panel changes often (refresh, rotation)
+                    if (displayId != android.view.Display.DEFAULT_DISPLAY) retry()
                 }
 
-                override fun onDisplayRemoved(displayId: Int) {}
-                override fun onDisplayChanged(displayId: Int) {}
+                fun retry() {
+                    // a screen in the background must not grab the glasses from the
+                    // one in front (e.g. the player opened on top of it)
+                    if (activity.isDestroyed ||
+                        activity.window.decorView.windowVisibility != View.VISIBLE
+                    ) return
+                    if (toGlasses(activity, wrap, extras)) {
+                        dm.unregisterDisplayListener(this)
+                    }
+                }
             }
             dm.registerDisplayListener(listener, null)
             activity.window.decorView.addOnAttachStateChangeListener(

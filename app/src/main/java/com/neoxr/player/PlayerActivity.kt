@@ -220,13 +220,11 @@ class PlayerActivity : Activity(), SensorEventListener {
             renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
             keepScreenOn = true
         }
-        // Native-resolution output on the glasses: ask for their densest mode (in SBS
-        // a 3840x1080 link gives a true 1920 per eye instead of 960) and pin the GL
-        // buffer to physical pixels — sidesteps the scaled "logical" resolution some
-        // OEM display stacks run external displays at.
-        val bestMode = ext?.supportedModes?.maxWithOrNull(
-            compareBy({ it.physicalWidth.toLong() * it.physicalHeight }, { it.refreshRate })
-        )
+        // Native-resolution output on the glasses: their fastest mode at the link's
+        // resolution (Glasses.bestMode — a 3840x1080 full-SBS link gives a true 1920
+        // per eye) and the GL buffer pinned to physical pixels — sidesteps the scaled
+        // "logical" resolution some OEM display stacks run external displays at.
+        val bestMode = ext?.let { Glasses.bestMode(it) }
         if (bestMode != null) {
             pickedModeId = bestMode.modeId
             presentation?.window?.let { w ->
@@ -574,13 +572,11 @@ class PlayerActivity : Activity(), SensorEventListener {
         override fun onDisplayAdded(displayId: Int) = maybeSwitchOutput()
         override fun onDisplayRemoved(displayId: Int) = maybeSwitchOutput()
         override fun onDisplayChanged(displayId: Int) {
-            // the glasses' 3D/SBS menu toggle can change the advertised mode list on
-            // the fly: re-pick the densest mode if a better one appeared. Whether a
-            // full-width SBS mode is offered at all depends on the host's DP stack.
+            // the glasses' 3D/SBS menu toggle can move the link to another resolution
+            // on the fly: rebuild for it. Whether a full-width SBS mode is offered at
+            // all depends on the host's DP stack.
             if (displayId != glassesDisplay?.displayId) return
-            val best = glassesDisplay?.supportedModes?.maxWithOrNull(
-                compareBy({ it.physicalWidth.toLong() * it.physicalHeight }, { it.refreshRate })
-            ) ?: return
+            val best = glassesDisplay?.let { Glasses.bestMode(it) } ?: return
             if (pickedModeId != 0 && best.modeId != pickedModeId) recreate()
         }
     }
@@ -1671,6 +1667,9 @@ class PlayerActivity : Activity(), SensorEventListener {
         (getSystemService(SENSOR_SERVICE) as SensorManager).unregisterListener(this)
         player?.pause()
         glView.onPause()
+        // leaving: free the glasses now, not in onDestroy — that runs only after the
+        // screen underneath has resumed and tried to show its own presentation there
+        if (isFinishing) presentation?.dismiss()
     }
 
     /**
