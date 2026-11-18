@@ -44,8 +44,9 @@ mirroring mode:
   3D layout (2D, side-by-side, over-under) come from the video metadata, the file
   name, or the frame shape — and you can always set them by hand.
 - **Four ways to get video:** a site feed, the built-in browser, a local file
-  (local videos are grouped by folder), or a **network share** — browse an SMB
-  server and play from it, with nothing downloaded first.
+  (videos on the phone grouped by folder, plus a row for each SD card or USB
+  drive), or a **network share** — browse an SMB server and play from it, with
+  nothing downloaded first.
 - **Picks up where you left off.** Reopening a video resumes at the position you
   stopped at.
 - **Picture controls:** zoom, width, height, stereo depth and eye swap, per video,
@@ -96,8 +97,9 @@ add this repository URL and it will follow new releases.
    - **A site feed** — type a site address in the input field and press Add (or Done
      on the keyboard). If the site serves a DeoVR JSON API feed, you get a video
      list with previews. If it does not, the site opens in the built-in browser.
-   - **A local file** — press *Open File* and pick a video from your phone. NeoXR
-     also appears in the system *Open with* and *Share* menus.
+   - **A local file** — press *Open File* and pick a video. Videos on the phone are
+     grouped by folder; an SD card or USB drive appears as its own row. NeoXR also
+     appears in the system *Open with* and *Share* menus.
    - **A network share** — type `smb://user:password@192.168.1.10` in the same input
      field (or `smb://192.168.1.10` for a guest share) and press Add. Tapping it
      browses the server: shares, then folders, then videos, played straight over the
