@@ -137,6 +137,8 @@ class PlayerActivity : Activity(), SensorEventListener {
     private var zeroYaw = 0f
     /** Percent of real head/phone rotation carried into the view; 100 = one-to-one. */
     private var headSensitivity = 100
+    /** Glasses IMU only: look-up becomes look-down. Phone gyro pitch is unchanged. */
+    private var invertHeadPitch = false
     private var popupIsPicture = false
     private var zeroPitch = 0f
     private var yawZeroed = false // first sensor sample zeroes YAW (and only yaw)
@@ -171,6 +173,7 @@ class PlayerActivity : Activity(), SensorEventListener {
             subBold = p.getBoolean("subBold", false)
             subBottomPct = p.getInt("subBottom", 8)
             headSensitivity = p.getInt("headSens", 100)
+            invertHeadPitch = p.getBoolean("invertHeadPitch", false)
         }
         // diagnostic pass: dump every display the system exposes
         for (d in (getSystemService(DISPLAY_SERVICE) as DisplayManager).displays) {
@@ -1195,7 +1198,7 @@ class PlayerActivity : Activity(), SensorEventListener {
      * button only appears when there is something to choose.
      */
     /**
-     * Picture calibration and the two comfort knobs that belong with it. Separate
+     * Picture calibration and the comfort knobs that belong with it. Separate
      * from the geometry buttons on purpose: these describe the GLASSES, not the
      * video, so unlike zoom and width they persist across files.
      */
@@ -1268,6 +1271,21 @@ class PlayerActivity : Activity(), SensorEventListener {
         }
         header("HEAD / GYRO SENSITIVITY")
         row("headSens", headSensitivity, 5, 25..150) { headSensitivity = it }
+        header("INVERT HEAD PITCH")
+        trackList.addView(TextView(this).apply {
+            text = if (invertHeadPitch) "On" else "Off"
+            textSize = 14f
+            setPadding(padH, padV, padH, padV)
+            setTextColor(getColor(if (invertHeadPitch) R.color.primary else R.color.on_surface))
+            setOnClickListener {
+                invertHeadPitch = !invertHeadPitch
+                getSharedPreferences("neoxr", MODE_PRIVATE)
+                    .edit().putBoolean("invertHeadPitch", invertHeadPitch).apply()
+                applyView()
+                buildPictureMenu()
+                showControls()
+            }
+        })
 
         trackList.addView(TextView(this).apply {
             text = "Reset picture"
@@ -1523,9 +1541,12 @@ class PlayerActivity : Activity(), SensorEventListener {
         // some people: the glasses show ~50 degrees of view, so a real 50-degree turn
         // sweeps the whole panel. Below 100 the scene turns less than you do.
         val g = headSensitivity / 100f
+        // Sign lives on the glasses delta only, so a recenter still reads as level
+        // and swiping the view, or the phone gyro, keeps its own direction.
+        val pitchSign = if (headMode && invertHeadPitch) -1f else 1f
         renderer.yawDeg = dragYaw + if (gyroEnabled) wrap(sensorYaw - zeroYaw) * g else 0f
         renderer.pitchDeg =
-            (dragPitch + if (gyroEnabled) (sensorPitch - zeroPitch) * g else 0f)
+            (dragPitch + if (gyroEnabled) (sensorPitch - zeroPitch) * g * pitchSign else 0f)
                 .coerceIn(-89f, 89f)
         levelView?.postInvalidateOnAnimation()
     }
