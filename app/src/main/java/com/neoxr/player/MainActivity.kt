@@ -162,7 +162,17 @@ class MainActivity : AppCompatActivity() {
             emptyList()
         }
         localVideos = found
-        drives = Volumes.drives(mounts.map { Volumes.Drive(it.id, it.label) }, found.map { it.volume })
+        // Names the scanner knows about, even with zero videos, so a mounted card
+        // that the mount list missed still gets a row of its own.
+        val scanned = runCatching {
+            if (android.os.Build.VERSION.SDK_INT >= 29) {
+                android.provider.MediaStore.getExternalVolumeNames(this).map { Volumes.canonical(it) }
+            } else emptyList()
+        }.getOrDefault(emptyList())
+        drives = Volumes.drives(
+            mounts.map { Volumes.Drive(it.id, it.label) },
+            scanned + found.map { it.volume }
+        )
         openFolder = null
         openVolume = null
         smbUrl = null
@@ -171,50 +181,80 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Videos MediaStore has scanned, tagged with the drive they sit on. Android 10
-     * and newer have a volume column; before that the file path is matched against
-     * the mount roots. Only indexed videos appear — a folder with no video never
-     * does — so the drive row itself is what makes an empty card visible.
+     * Videos MediaStore has scanned, tagged with the drive they sit on.
+     *
+     * Android 10 and newer can name each drive. Querying the merged collection
+     * returns every drive's videos at once, but rows from that query do not
+     * reliably say which drive they came from, so each drive is queried on its
+     * own and the videos keep that drive's name. Only indexed videos appear —
+     * a folder with no video never does — so the drive row itself is what
+     * makes an empty card visible.
      */
-    @Suppress("DEPRECATION") // MediaStore.DATA: the volume column does not exist before Android 10
     private fun queryLocalVideos(mounts: List<Volumes.Mount>): List<LocalVideo> {
-        val modern = android.os.Build.VERSION.SDK_INT >= 29
-        val volumeColumn =
-            if (modern) android.provider.MediaStore.Video.Media.VOLUME_NAME
-            else android.provider.MediaStore.Video.Media.DATA
         val found = mutableListOf<LocalVideo>()
-        contentResolver.query(
-            android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-            arrayOf(
-                android.provider.MediaStore.Video.Media._ID,
-                android.provider.MediaStore.Video.Media.DISPLAY_NAME,
-                android.provider.MediaStore.Video.Media.DURATION,
-                android.provider.MediaStore.Video.Media.BUCKET_DISPLAY_NAME,
-                volumeColumn
-            ),
-            null, null,
-            android.provider.MediaStore.Video.Media.DATE_ADDED + " DESC"
-        )?.use { c ->
-            val pathMounts = mounts.mapNotNull { m -> m.path?.let { it to m.id } }
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            val names = android.provider.MediaStore.getExternalVolumeNames(this)
+            val targets = names.ifEmpty { setOf(android.provider.MediaStore.VOLUME_EXTERNAL) }
+            for (name in targets) {
+                queryVolume(
+                    found,
+                    android.provider.MediaStore.Video.Media.getContentUri(name),
+                    name,
+                    mounts
+                )
+            }
+        } else {
+            queryVolume(
+                found,
+                android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                null,
+                mounts
+            )
+        }
+        return found.distinctBy { it.uri }
+    }
+
+    /** Appends the videos in one collection. [queriedVolume] null means the path decides. */
+    @Suppress("DEPRECATION") // MediaStore.DATA: a path fallback for rows the volume name does not tag
+    private fun queryVolume(
+        out: MutableList<LocalVideo>,
+        collection: android.net.Uri,
+        queriedVolume: String?,
+        mounts: List<Volumes.Mount>
+    ) {
+        val id = android.provider.MediaStore.Video.Media._ID
+        val name = android.provider.MediaStore.Video.Media.DISPLAY_NAME
+        val duration = android.provider.MediaStore.Video.Media.DURATION
+        val bucket = android.provider.MediaStore.Video.Media.BUCKET_DISPLAY_NAME
+        val data = android.provider.MediaStore.Video.Media.DATA
+        val order = android.provider.MediaStore.Video.Media.DATE_ADDED + " DESC"
+        val withPath = arrayOf(id, name, duration, bucket, data)
+        val bare = arrayOf(id, name, duration, bucket)
+        val cursor = try {
+            contentResolver.query(collection, withPath, null, null, order)
+        } catch (_: IllegalArgumentException) {
+            contentResolver.query(collection, bare, null, null, order)
+        } ?: return
+        val pathMounts = mounts.mapNotNull { m -> m.path?.let { it to m.id } }
+        cursor.use { c ->
+            val idCol = c.getColumnIndexOrThrow(id)
+            val nameCol = c.getColumnIndexOrThrow(name)
+            val durCol = c.getColumnIndexOrThrow(duration)
+            val folderCol = c.getColumnIndexOrThrow(bucket)
+            val dataCol = c.getColumnIndex(data)
             while (c.moveToNext()) {
-                val raw = c.getString(4)
-                val volume = if (modern) Volumes.canonical(raw)
-                else Volumes.volumeIdForPath(raw, pathMounts)
-                found.add(
+                val path = if (dataCol >= 0) c.getString(dataCol) else null
+                out.add(
                     LocalVideo(
-                        android.content.ContentUris.withAppendedId(
-                            android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-                            c.getLong(0)
-                        ),
-                        c.getString(1) ?: "?",
-                        Deo.formatDuration((c.getLong(2) / 1000).toInt()),
-                        c.getString(3) ?: "Other",
-                        volume
+                        android.content.ContentUris.withAppendedId(collection, c.getLong(idCol)),
+                        c.getString(nameCol) ?: "?",
+                        Deo.formatDuration((c.getLong(durCol) / 1000).toInt()),
+                        c.getString(folderCol) ?: "Other",
+                        Volumes.assignVolume(queriedVolume, path, pathMounts)
                     )
                 )
             }
         }
-        return found
     }
 
     /** Videos of the phone, or of the drive currently open. */

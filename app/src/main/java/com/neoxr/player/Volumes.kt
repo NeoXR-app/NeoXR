@@ -10,10 +10,11 @@ import android.os.storage.StorageVolume
  * SD cards and USB drives in the file list.
  *
  * The list is not a directory walk. It is the videos MediaStore has already
- * scanned, and one query of the merged external volume mixes every drive into
- * a single set of folder names — "Movies" on the phone and "Movies" on a card
- * become one row, and a drive the scanner has not indexed yet does not appear
- * at all. Each mounted drive therefore gets its own row, keyed apart from the
+ * scanned. One query of the merged external volume returns every drive's
+ * videos, but the volume column on that query is often blank or the generic
+ * name "external" — both of which mean "the phone" here — so a card's videos
+ * land in the phone's folders and the card never gets its own row. Each drive
+ * is therefore queried through its own collection, and keyed apart from the
  * phone, whether or not it has videos yet.
  */
 object Volumes {
@@ -44,21 +45,32 @@ object Volumes {
     }
 
     /**
-     * Stable id for a mounted volume. The phone is always [PRIMARY], so its
-     * folders can never share a key with a card. A removable volume prefers the
-     * name MediaStore tags its videos with, then the filesystem uuid, then the
-     * mount path — the last two keep a drive that has no indexed video yet.
+     * Stable id for a mounted volume. The phone is always [PRIMARY]. A
+     * removable volume never is, even when its MediaStore name comes back as
+     * the phone's: that generic name is what hid the card's row. It prefers
+     * the real per-drive name videos are tagged with, then the filesystem
+     * uuid, then the mount path — the last two keep a drive with no indexed
+     * video yet.
      */
     fun id(isPrimary: Boolean, mediaStoreVolumeName: String?, uuid: String?, path: String?): String {
         if (isPrimary) return PRIMARY
-        // A volume the scanner calls the phone stays the phone, even if the
-        // primary flag is wrong. A missing name must NOT take this branch:
-        // isPrimary(null) is true, and that would hide an unscanned card.
-        val media = mediaStoreVolumeName?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
-        if (media != null && isPrimary(media)) return PRIMARY
+        val media = mediaStoreVolumeName?.trim()?.lowercase()?.takeIf { it.isNotEmpty() && !isPrimary(it) }
         if (media != null) return media
         uuid?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }?.let { return it }
         return path?.trim()?.takeIf { it.isNotEmpty() } ?: "removable"
+    }
+
+    /**
+     * Drive a video belongs to. [queriedVolume] is the collection that returned
+     * it — a real card name wins outright. The merged collection and the phone's
+     * own collection both look like [PRIMARY], and then the file path is the
+     * only remaining way to tell a card from the phone.
+     */
+    fun assignVolume(queriedVolume: String?, filePath: String?, mounts: List<Pair<String, String>>): String {
+        val tagged = if (queriedVolume == null) volumeIdForPath(filePath, mounts) else canonical(queriedVolume)
+        if (!isPrimary(tagged)) return tagged
+        val byPath = volumeIdForPath(filePath, mounts)
+        return if (isPrimary(byPath)) tagged else byPath
     }
 
     /**

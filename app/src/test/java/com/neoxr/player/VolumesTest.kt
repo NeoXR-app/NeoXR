@@ -17,9 +17,33 @@ class VolumesTest {
     }
 
     @Test
-    fun volumeIndexedAsThePhoneStaysThePhone() {
-        assertEquals(Volumes.PRIMARY, Volumes.id(false, "external_primary", "ABCD-1234", "/storage/ABCD-1234"))
-        assertEquals(Volumes.PRIMARY, Volumes.id(false, "external", null, "/storage/emulated/0"))
+    fun removableVolumeStaysADriveWhenTheScannerUsesThePhoneName() {
+        // A generic MediaStore name must not swallow the card: that is what put
+        // its videos into the phone's folders and left no row of its own.
+        assertEquals("abcd-1234", Volumes.id(false, "external_primary", "ABCD-1234", "/storage/ABCD-1234"))
+        assertEquals("/storage/usb", Volumes.id(false, "external", null, "/storage/usb"))
+    }
+
+    @Test
+    fun cardQueryStaysOnTheCard() {
+        assertEquals("abcd-1234", Volumes.assignVolume("ABCD-1234", null, emptyList()))
+    }
+
+    @Test
+    fun phoneQueryWithACardPathMovesToTheCard() {
+        val mounts = listOf("/storage/ABCD-1234" to "abcd-1234")
+        assertEquals(
+            "abcd-1234",
+            Volumes.assignVolume("external_primary", "/storage/ABCD-1234/Movies/a.mp4", mounts)
+        )
+        assertEquals(
+            Volumes.PRIMARY,
+            Volumes.assignVolume("external", "/storage/emulated/0/Movies/a.mp4", mounts)
+        )
+        assertEquals(
+            "abcd-1234",
+            Volumes.assignVolume("external", "/storage/ABCD-1234/a.mp4", mounts)
+        )
     }
 
     @Test
