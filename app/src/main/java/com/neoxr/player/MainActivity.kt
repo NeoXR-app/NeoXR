@@ -30,7 +30,7 @@ class MainActivity : AppCompatActivity() {
 
             SITES
             Tap a site to open its videos: a list with previews, and a "Browse" panel for search, sorting and filters over it. Add any site by its URL. ✕ removes a site.
-            "Open File" lists the videos on this device, grouped by folder; NeoXR also appears in "Open with" and "Share" for video files.
+            "Open File" lists the videos on this phone, grouped by folder. Each SD card or USB drive has its own row, and a folder on a card stays separate from a folder of the same name on the phone. NeoXR also appears in "Open with" and "Share" for video files.
 
             BROWSER
             Sites without a video feed open in the built-in browser: play a video there and press "▶ VR" to watch it in the player. ← → navigate; "View" reloads the page as a phone, a Quest 3 or a desktop; the % button sets page scale; "Pad" turns the right third of the screen into a touchpad with a pointer, for use through the glasses.
@@ -108,13 +108,20 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // One video on the device: its URI, file name, duration and the folder it lives in.
+    // One video on the device: its URI, file name, duration, folder and which drive it is on.
     private data class LocalVideo(
-        val uri: android.net.Uri, val name: String, val duration: String, val folder: String
+        val uri: android.net.Uri,
+        val name: String,
+        val duration: String,
+        val folder: String,
+        val volume: String
     )
 
     private var localVideos = listOf<LocalVideo>()
+    private var drives = listOf<Volumes.Drive>()
     private var openFolder: String? = null // null = folder list, otherwise its videos
+    // null = the phone's folders, plus one row per drive. Otherwise that drive's id.
+    private var openVolume: String? = null
 
     // Network share being browsed in the same overlay; null = the overlay is showing
     // local videos instead.
@@ -147,48 +154,129 @@ class MainActivity : AppCompatActivity() {
 
     private fun showLocalVideos() {
         val wrap = wrapView ?: return
-        val found = mutableListOf<LocalVideo>()
-        try {
-            contentResolver.query(
-                android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-                arrayOf(
-                    android.provider.MediaStore.Video.Media._ID,
-                    android.provider.MediaStore.Video.Media.DISPLAY_NAME,
-                    android.provider.MediaStore.Video.Media.DURATION,
-                    android.provider.MediaStore.Video.Media.BUCKET_DISPLAY_NAME
-                ),
-                null, null,
-                android.provider.MediaStore.Video.Media.DATE_ADDED + " DESC"
-            )?.use { c ->
-                while (c.moveToNext()) {
-                    val uri = android.content.ContentUris.withAppendedId(
-                        android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-                        c.getLong(0)
-                    )
-                    found.add(
-                        LocalVideo(
-                            uri,
-                            c.getString(1) ?: "?",
-                            Deo.formatDuration((c.getLong(2) / 1000).toInt()),
-                            c.getString(3) ?: "Other"
-                        )
-                    )
-                }
-            }
+        val mounts = Volumes.mounts(this)
+        val found = try {
+            queryLocalVideos(mounts)
         } catch (e: Exception) {
             Toast.makeText(this, "Media query failed: ${e.message}", Toast.LENGTH_SHORT).show()
+            emptyList()
         }
         localVideos = found
+        // Names the scanner knows about, even with zero videos, so a mounted card
+        // that the mount list missed still gets a row of its own.
+        val scanned = runCatching {
+            if (android.os.Build.VERSION.SDK_INT >= 29) {
+                android.provider.MediaStore.getExternalVolumeNames(this).map { Volumes.canonical(it) }
+            } else emptyList()
+        }.getOrDefault(emptyList())
+        drives = Volumes.drives(
+            mounts.map { Volumes.Drive(it.id, it.label) },
+            scanned + found.map { it.volume }
+        )
         openFolder = null
+        openVolume = null
         smbUrl = null
         renderFileList()
         wrap.findViewById<View>(R.id.fileOverlay).visibility = View.VISIBLE
     }
 
     /**
-     * Draws either the folder list or the videos inside [openFolder]. A flat list of
-     * every video on the device is unusable on a real library, so the first level
-     * groups by folder (MediaStore's bucket) with a count per row.
+     * Videos MediaStore has scanned, tagged with the drive they sit on.
+     *
+     * Android 10 and newer can name each drive. Querying the merged collection
+     * returns every drive's videos at once, but rows from that query do not
+     * reliably say which drive they came from, so each drive is queried on its
+     * own and the videos keep that drive's name. Only indexed videos appear —
+     * a folder with no video never does — so the drive row itself is what
+     * makes an empty card visible.
+     */
+    private fun queryLocalVideos(mounts: List<Volumes.Mount>): List<LocalVideo> {
+        val found = mutableListOf<LocalVideo>()
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            val names = android.provider.MediaStore.getExternalVolumeNames(this)
+            val targets = names.ifEmpty { setOf(android.provider.MediaStore.VOLUME_EXTERNAL) }
+            for (name in targets) {
+                queryVolume(
+                    found,
+                    android.provider.MediaStore.Video.Media.getContentUri(name),
+                    name,
+                    mounts
+                )
+            }
+        } else {
+            queryVolume(
+                found,
+                android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                null,
+                mounts
+            )
+        }
+        return found.distinctBy { it.uri }
+    }
+
+    /** Appends the videos in one collection. [queriedVolume] null means the path decides. */
+    @Suppress("DEPRECATION") // MediaStore.DATA: a path fallback for rows the volume name does not tag
+    private fun queryVolume(
+        out: MutableList<LocalVideo>,
+        collection: android.net.Uri,
+        queriedVolume: String?,
+        mounts: List<Volumes.Mount>
+    ) {
+        val id = android.provider.MediaStore.Video.Media._ID
+        val name = android.provider.MediaStore.Video.Media.DISPLAY_NAME
+        val duration = android.provider.MediaStore.Video.Media.DURATION
+        val bucket = android.provider.MediaStore.Video.Media.BUCKET_DISPLAY_NAME
+        val data = android.provider.MediaStore.Video.Media.DATA
+        val order = android.provider.MediaStore.Video.Media.DATE_ADDED + " DESC"
+        val withPath = arrayOf(id, name, duration, bucket, data)
+        val bare = arrayOf(id, name, duration, bucket)
+        val cursor = try {
+            contentResolver.query(collection, withPath, null, null, order)
+        } catch (_: IllegalArgumentException) {
+            contentResolver.query(collection, bare, null, null, order)
+        } ?: return
+        val pathMounts = mounts.mapNotNull { m -> m.path?.let { it to m.id } }
+        cursor.use { c ->
+            val idCol = c.getColumnIndexOrThrow(id)
+            val nameCol = c.getColumnIndexOrThrow(name)
+            val durCol = c.getColumnIndexOrThrow(duration)
+            val folderCol = c.getColumnIndexOrThrow(bucket)
+            val dataCol = c.getColumnIndex(data)
+            while (c.moveToNext()) {
+                val path = if (dataCol >= 0) c.getString(dataCol) else null
+                out.add(
+                    LocalVideo(
+                        android.content.ContentUris.withAppendedId(collection, c.getLong(idCol)),
+                        c.getString(nameCol) ?: "?",
+                        Deo.formatDuration((c.getLong(durCol) / 1000).toInt()),
+                        c.getString(folderCol) ?: "Other",
+                        Volumes.assignVolume(queriedVolume, path, pathMounts)
+                    )
+                )
+            }
+        }
+    }
+
+    /** Videos of the phone, or of the drive currently open. */
+    private fun videosInView(): List<LocalVideo> {
+        val vol = openVolume
+        return if (vol == null) localVideos.filter { Volumes.isPrimary(it.volume) }
+        else localVideos.filter { it.volume == vol }
+    }
+
+    private fun folderRows(videos: List<LocalVideo>): List<Pair<String, () -> Unit>> =
+        videos.groupBy { it.folder }.entries
+            .sortedBy { it.key.lowercase() }
+            .map { (name, items) ->
+                "▸  $name   (${items.size})" to { openFolder = name; renderFileList() }
+            }
+
+    /**
+     * Draws the phone's folders, one drive, or the videos inside [openFolder].
+     * A flat list of every video is unusable on a real library, so each level
+     * groups by folder (MediaStore's bucket) with a count per row. Drives are
+     * their own rows above the phone's folders: the same folder name on a card
+     * would otherwise merge with the phone.
      */
     private fun renderFileList() {
         val wrap = wrapView ?: return
@@ -198,6 +286,7 @@ class MainActivity : AppCompatActivity() {
 
         val share = smbUrl
         val folder = openFolder
+        val here = if (share == null) videosInView() else emptyList()
         // rows: label to action
         val rows: List<Pair<String, () -> Unit>> = if (share != null) {
             title.text = "◂  " + Smb.display(share).uppercase()
@@ -213,18 +302,24 @@ class MainActivity : AppCompatActivity() {
                             )
                         }
                     }
-        } else if (folder == null) {
+        } else if (folder == null && openVolume == null) {
             title.text = "LOCAL VIDEOS"
-            localVideos.groupBy { it.folder }.entries
-                .sortedBy { it.key.lowercase() }
-                .map { (name, items) ->
-                    "▸  $name   (${items.size})" to { openFolder = name; renderFileList() }
-                }
+            drives.map { d ->
+                val n = localVideos.count { it.volume == d.id }
+                val count = if (n == 0) "no videos" else n.toString()
+                "▣  ${d.label}   ($count)" to { openVolume = d.id; renderFileList() }
+            } + folderRows(here)
+        } else if (folder == null) {
+            val label = drives.find { it.id == openVolume }?.label ?: "External drive"
+            title.text = "◂  ${label.uppercase()}"
+            listOf<Pair<String, () -> Unit>>(
+                "◂  Back" to { openVolume = null; renderFileList() }
+            ) + folderRows(here)
         } else {
             title.text = "◂  ${folder.uppercase()}"
             listOf<Pair<String, () -> Unit>>(
                 "◂  Back to folders" to { openFolder = null; renderFileList() }
-            ) + localVideos.filter { it.folder == folder }.map { v ->
+            ) + here.filter { it.folder == folder }.map { v ->
                 "${v.name}   ·   ${v.duration}" to {
                     startActivity(
                         Intent(this, PlayerActivity::class.java)
@@ -235,9 +330,22 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        wrap.findViewById<View>(R.id.fileEmpty).visibility =
-            if (rows.isEmpty() || (smbUrl != null && smbEntries.isEmpty())) View.VISIBLE
-            else View.GONE
+        val empty = wrap.findViewById<TextView>(R.id.fileEmpty)
+        // A drive row is shown even with nothing scanned yet, so the empty line
+        // has to say why its videos are missing. The share browser sets its own.
+        if (share == null) {
+            empty.text = if (openVolume != null)
+                "No videos on this drive yet. They show up here after Android has scanned it."
+            else
+                "No videos found on this device."
+        }
+        val nothingHere = when {
+            share != null -> smbEntries.isEmpty()
+            folder != null -> here.none { it.folder == folder }
+            openVolume != null -> here.isEmpty()
+            else -> here.isEmpty() && drives.isEmpty()
+        }
+        empty.visibility = if (nothingHere) View.VISIBLE else View.GONE
         list.adapter = object : BaseAdapter() {
             override fun getCount() = rows.size
             override fun getItem(pos: Int) = rows[pos]
